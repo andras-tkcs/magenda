@@ -17,7 +17,7 @@
     "type": "binary",
     "entry_point": "server/magenda",
     "mcp_config": {
-      "command": "server/magenda",
+      "command": "${__dirname}/server/magenda",
       "args": []
     }
   },
