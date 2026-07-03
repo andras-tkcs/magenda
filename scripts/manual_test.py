@@ -81,8 +81,9 @@ def main() -> None:
 
         page_count = len(fitz.open(pdf_path))
         print(f"\n→ page count: {page_count}")
-        print("   expected: 1 (overview) + 3 (one per meeting) + 1 (closing) + 1 (closing")
-        print("   page's own pre-existing trailing blank page, unrelated to meetings) = 6")
+        print("   expected: 6 — page 1 (to-do) overflows onto its own page 2 (daily")
+        print("   schedule) under this stress test's heavy input, + 3 meeting pages")
+        print("   + 1 closing page. No trailing blank page.")
     except ImportError:
         pass
 

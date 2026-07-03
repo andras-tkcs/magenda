@@ -540,7 +540,15 @@ def ensure_further_notes_page_break(body: etree._Element) -> None:
     page its own calendar header (cloned from the same source as every other
     page) to keep every page's look consistent, and put the page break
     directly before that header rather than before the 'Further notes'
-    title, so the header and title stay together on the new page."""
+    title, so the header and title stay together on the new page.
+
+    The closing page's own ruled-notes table ships with 23 rows in the
+    template — fine when the page is reached by natural overflow (as in the
+    stock template), but the same empirically-observed overflow described in
+    strip_meeting_notes_footer applies once it's reached via a hard page
+    break instead: 23 rows plus the header/title is a hair too tall and
+    produces a fully blank trailing page; 22 fits cleanly. Trim one row to
+    match."""
     para = find_further_notes_paragraph(body)
 
     header = para.getprevious()
@@ -555,6 +563,12 @@ def ensure_further_notes_page_break(body: etree._Element) -> None:
     )
     if not already_has_break:
         header.addprevious(_page_break_paragraph())
+
+    closing_table = para.getnext()
+    if closing_table is not None and closing_table.tag == qn("w:tbl"):
+        rows = closing_table.findall("w:tr", NS)
+        if len(rows) > 22:
+            closing_table.remove(rows[-1])
 
 
 def _new_meeting_insertion_anchor(body: etree._Element) -> etree._Element:

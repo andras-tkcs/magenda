@@ -29,10 +29,9 @@ def test_full_agenda_lifecycle():
     import fitz
 
     doc = fitz.open(result["path"])
-    # overview (1) + meeting 1 (1) + meeting 2 (1) + closing (1), plus the
-    # closing page's own trailing blank page (a pre-existing quirk of the
-    # template's "Further notes" ruled-line table, unrelated to meetings).
-    assert len(doc) == 5
+    # overview (1) + meeting 1 (1) + meeting 2 (1) + closing (1). No trailing
+    # blank page.
+    assert len(doc) == 4
 
     full_text = "".join(page.get_text() for page in doc)
     assert "14 FRIDAY" in full_text
@@ -75,17 +74,16 @@ def test_meetings_render_one_page_each():
 
     result = tools.render_pdf(date)
     doc = fitz.open(result["path"])
-    # overview (1) + 3 single-page meetings + closing (1) + the closing
-    # page's own pre-existing trailing blank page.
-    assert len(doc) == 6
+    # overview (1) + 3 single-page meetings + closing (1). No trailing
+    # blank page.
+    assert len(doc) == 5
 
     meeting_pages = [i for i, page in enumerate(doc) if "Meeting title:" in page.get_text()]
     assert len(meeting_pages) == 3
 
-    # Every page except the last (the closing page's own pre-existing
-    # trailing blank) must carry real content — no stray blank pages
-    # wedged between meetings.
-    for page in doc[:-1]:
+    # Every page must carry real content — no stray blank pages wedged
+    # between meetings, and no trailing blank page after the closing page.
+    for page in doc:
         assert page.get_text().strip() != ""
 
 
