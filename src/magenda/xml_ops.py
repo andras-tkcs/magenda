@@ -150,16 +150,17 @@ def set_cell_text_lines(tc: etree._Element, lines: list[str]) -> None:
 
 
 def set_run_text_at(p_or_tc: etree._Element, run_index: int, text: str) -> None:
-    """Set the text of the Nth run within a paragraph/cell's first paragraph,
-    leaving all other runs untouched. Used for cells like 'CW 21' or
-    '19 TUESDAY' that are deliberately split across multiple runs."""
+    """Set the Nth piece of text within a paragraph/cell's first paragraph,
+    leaving everything else untouched. Used for cells like 'CW 21' or
+    '19 TUESDAY' that are deliberately split into multiple pieces of text —
+    addressed by <w:t> text node rather than by sibling <w:r>, since those
+    pieces may live in separate runs or share one (LibreOffice merges runs
+    with identical formatting on save)."""
     p = p_or_tc if p_or_tc.tag == qn("w:p") else p_or_tc.find("w:p", NS)
-    runs = p.findall("w:r", NS)
-    if run_index >= len(runs):
-        raise MagendaError(f"expected run index {run_index}, paragraph only has {len(runs)} runs")
-    t = runs[run_index].find("w:t", NS)
-    if t is None:
-        t = etree.SubElement(runs[run_index], qn("w:t"))
+    texts = p.findall(".//w:t", NS)
+    if run_index >= len(texts):
+        raise MagendaError(f"expected text node {run_index}, paragraph only has {len(texts)}")
+    t = texts[run_index]
     t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
     t.text = text
 
@@ -209,12 +210,19 @@ def find_calendar_blocks(body: etree._Element) -> list[CalendarBlock]:
 def apply_calendar_block(block: CalendarBlock, fields: dict) -> None:
     """fields: output of calendar_math.header_fields()."""
     cells = block.title_row.findall("w:tc", NS)
-    # cell 0: "<day>" + " <WEEKDAY>" (2 runs)
-    set_run_text_at(cells[0], 0, fields["day"])
-    set_run_text_at(cells[0], 1, " " + fields["weekday_name"])
-    # cell 2: "CW " + "<n>" (2 runs) — index 2 because cell 1 is a blank spacer
-    cw_runs = cells[2].find("w:p", NS).findall("w:r", NS)
-    if len(cw_runs) >= 2:
+    # cell 0: "<day>" + " <WEEKDAY>", normally 2 text nodes, but LibreOffice
+    # merges same-formatted text nodes into one on save — fall back to
+    # writing the combined string into whichever single node remains.
+    day_texts = cells[0].find("w:p", NS).findall(".//w:t", NS)
+    if len(day_texts) >= 2:
+        set_run_text_at(cells[0], 0, fields["day"])
+        set_run_text_at(cells[0], 1, " " + fields["weekday_name"])
+    else:
+        set_run_text_at(cells[0], 0, fields["day"] + " " + fields["weekday_name"])
+    # cell 2: "CW " + "<n>" — index 2 because cell 1 is a blank spacer.
+    # Same merge fallback as cell 0.
+    cw_texts = cells[2].find("w:p", NS).findall(".//w:t", NS)
+    if len(cw_texts) >= 2:
         set_run_text_at(cells[2], 1, fields["cw"].split(" ", 1)[1])
     else:
         set_run_text_at(cells[2], 0, fields["cw"])
@@ -432,12 +440,19 @@ def set_meeting_title(title_para: etree._Element, title: str) -> None:
     stays on one line. The title paragraph has no fixed-width cell to
     measure against — it starts after the 'Meeting title: ' label plus two
     default tab stops — so the available width has to be derived from the
-    page's content width instead of a w:tcW."""
-    runs = title_para.findall(".//w:r", NS)
-    if len(runs) < 3:
+    page's content width instead of a w:tcW.
+
+    The label and title live in the trailing two <w:t> text nodes of the
+    paragraph. They may be split across separate <w:r> runs or share a
+    single run (LibreOffice merges runs with identical formatting on
+    save) — either is valid OOXML, so this addresses text nodes directly
+    rather than assuming a fixed number of sibling runs."""
+    texts = title_para.findall(".//w:t", NS)
+    if len(texts) < 2:
         raise MagendaError("meeting title paragraph has an unexpected run structure")
-    label_text = "".join(t.text or "" for t in runs[0].findall("w:t", NS))
-    family, size = _run_font(runs[2])
+    label_text = texts[0].text or ""
+    title_run = texts[-1].getparent()
+    family, size = _run_font(title_run)
     x = _next_tab_stop(text_width_twips(label_text, family=family, size_half_points=size))
     x = _next_tab_stop(x)
     fitted = fit_single_line(
@@ -446,7 +461,8 @@ def set_meeting_title(title_para: etree._Element, title: str) -> None:
         size_half_points=size,
         max_width_twips=PAGE_CONTENT_WIDTH_TWIPS - x,
     )
-    set_run_text_at(title_para, 2, fitted)
+    texts[-1].set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+    texts[-1].text = fitted
 
 
 def blank_meeting_title_slot(body: etree._Element) -> None:
