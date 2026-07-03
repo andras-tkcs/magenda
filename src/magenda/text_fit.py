@@ -44,6 +44,18 @@ def text_width_twips(text: str, *, family: str, size_half_points: int) -> float:
     return _width_pt(text, font) * 20
 
 
+def text_line_height_twips(family: str, size_half_points: int) -> float:
+    """Rendered line height (ascent + descent) at the given font/size, in
+    twips. Used to figure out how many of the template's fixed-height rows a
+    block of wrapped, possibly downsized, lines actually needs — a row sized
+    for one line at the default size can often hold more than one line once
+    the font has been shrunk."""
+    size_pt = max(1, round(size_half_points / 2))
+    font = _font(family, size_pt)
+    ascent, descent = font.getmetrics()
+    return (ascent + descent) * 20
+
+
 def fit_single_line(text: str, *, family: str, size_half_points: int, max_width_twips: int) -> str:
     """Return `text`, truncated from the end (no ellipsis) so it renders on
     a single line within `max_width_twips` at the given font/size. Returns

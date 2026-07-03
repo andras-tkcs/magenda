@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "magenda",
   "display_name": "Magenda",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "MCP server that generates a deterministic, pixel-identical daily agenda PDF from a fixed docx template.",
   "long_description": "Magenda generates a daily agenda PDF laid out exactly like a fixed docx template. Tools only inject plain text into known slots or clone pre-formatted pages -- there is no AI-generated layout -- then a pinned LibreOffice headless build renders the result to PDF. Requires LibreOffice (`brew install --cask libreoffice`), which is not bundled.",
   "author": {

@@ -8,12 +8,18 @@ free-form formatting — all formatting is copied from the template's own runs.
 from __future__ import annotations
 
 import copy
+import math
 import re
 from dataclasses import dataclass
 
 from lxml import etree
 
-from magenda.text_fit import fit_downsize_or_wrap, fit_single_line, text_width_twips
+from magenda.text_fit import (
+    fit_downsize_or_wrap,
+    fit_single_line,
+    text_line_height_twips,
+    text_width_twips,
+)
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 NS = {"w": W}
@@ -305,14 +311,20 @@ def append_tasks(table: etree._Element, tasks: list[dict]) -> None:
     1's tight layout (it's shared with the daily schedule, and there's no
     slack for a taller row) and does so regardless of which row grows, so
     rows are vertically merged (w:vMerge) instead — every to-do row keeps
-    its normal single-line height, and a wrapped task simply consumes as
-    many of the 18 rows as it has lines."""
+    its normal single-line height, and a wrapped task consumes only as many
+    of the 18 rows as its wrapped lines actually need at their (possibly
+    downsized) font size, rather than one row per line: a row sized for one
+    line at the default size can fit several lines once the font has
+    shrunk, so charging one full row per line would leave large blank gaps
+    below the text."""
     rows = table.findall("w:tr", NS)[1:]  # skip header row
     empty_rows = [r for r in rows if cell_text(r.findall("w:tc", NS)[1]) == "" and cell_text(r.findall("w:tc", NS)[2]) == ""]
 
-    sample_cells = (empty_rows[0] if empty_rows else rows[0]).findall("w:tc", NS)
+    sample_row = empty_rows[0] if empty_rows else rows[0]
+    sample_cells = sample_row.findall("w:tc", NS)
     family, default_size = cell_run_font(sample_cells[1])
     width = cell_text_width_twips(sample_cells[1])
+    row_height = int(sample_row.find("w:trPr/w:trHeight", NS).get(qn("w:val")))
 
     plans = [
         fit_downsize_or_wrap(
@@ -324,7 +336,11 @@ def append_tasks(table: etree._Element, tasks: list[dict]) -> None:
         )
         for task in tasks
     ]
-    rows_needed = sum(len(lines) for lines, _ in plans)
+    rows_per_plan = [
+        max(1, math.ceil(len(lines) * text_line_height_twips(family, size) / row_height))
+        for lines, size in plans
+    ]
+    rows_needed = sum(rows_per_plan)
     if rows_needed > len(empty_rows):
         raise MagendaError(
             f"only {len(empty_rows)} free to-do row(s) left (capacity {TODO_ROW_CAPACITY}), "
@@ -332,9 +348,9 @@ def append_tasks(table: etree._Element, tasks: list[dict]) -> None:
         )
 
     cursor = 0
-    for task, (lines, size) in zip(tasks, plans):
-        group = empty_rows[cursor : cursor + len(lines)]
-        cursor += len(lines)
+    for task, (lines, size), row_count in zip(tasks, plans, rows_per_plan):
+        group = empty_rows[cursor : cursor + row_count]
+        cursor += row_count
         first_cells = group[0].findall("w:tc", NS)
         set_cell_text_lines(first_cells[1], lines)
         set_run_size(first_cells[1], size)
