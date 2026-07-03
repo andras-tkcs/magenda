@@ -279,27 +279,73 @@ def find_todo_table(body: etree._Element) -> etree._Element:
     raise MagendaError("could not locate the to-do list table in this agenda")
 
 
+def _set_vmerge(tc: etree._Element, restart: bool) -> None:
+    """Mark a cell as starting (restart) or continuing a vertical merge.
+    w:vMerge must sit right after w:tcW/w:gridSpan and before w:tcBorders in
+    tcPr's content model, so it's inserted by position, not appended."""
+    tcPr = tc.find("w:tcPr", NS)
+    if tcPr is None:
+        tcPr = etree.Element(qn("w:tcPr"))
+        tc.insert(0, tcPr)
+    vmerge = tcPr.find("w:vMerge", NS)
+    if vmerge is None:
+        vmerge = etree.Element(qn("w:vMerge"))
+        tcW = tcPr.find("w:tcW", NS)
+        tcPr.insert(list(tcPr).index(tcW) + 1 if tcW is not None else 0, vmerge)
+    if restart:
+        vmerge.set(qn("w:val"), "restart")
+    elif qn("w:val") in vmerge.attrib:
+        del vmerge.attrib[qn("w:val")]
+
+
 def append_tasks(table: etree._Element, tasks: list[dict]) -> None:
+    """Fill empty to-do rows top-down. A task whose text doesn't fit on one
+    line even at TODO_TASK_MIN_FONT_SIZE spans multiple rows instead of
+    growing a single row's height: growing one row's height throws off page
+    1's tight layout (it's shared with the daily schedule, and there's no
+    slack for a taller row) and does so regardless of which row grows, so
+    rows are vertically merged (w:vMerge) instead — every to-do row keeps
+    its normal single-line height, and a wrapped task simply consumes as
+    many of the 18 rows as it has lines."""
     rows = table.findall("w:tr", NS)[1:]  # skip header row
     empty_rows = [r for r in rows if cell_text(r.findall("w:tc", NS)[1]) == "" and cell_text(r.findall("w:tc", NS)[2]) == ""]
-    if len(tasks) > len(empty_rows):
-        raise MagendaError(
-            f"only {len(empty_rows)} free to-do row(s) left (capacity {TODO_ROW_CAPACITY}), "
-            f"got {len(tasks)} task(s)"
-        )
-    for row, task in zip(empty_rows, tasks):
-        cells = row.findall("w:tc", NS)
-        family, default_size = cell_run_font(cells[1])
-        lines, size = fit_downsize_or_wrap(
+
+    sample_cells = (empty_rows[0] if empty_rows else rows[0]).findall("w:tc", NS)
+    family, default_size = cell_run_font(sample_cells[1])
+    width = cell_text_width_twips(sample_cells[1])
+
+    plans = [
+        fit_downsize_or_wrap(
             task["text"],
             family=family,
             max_size_half_points=default_size,
             min_size_half_points=TODO_TASK_MIN_FONT_SIZE,
-            max_width_twips=cell_text_width_twips(cells[1]),
+            max_width_twips=width,
         )
-        set_cell_text_lines(cells[1], lines)
-        set_run_size(cells[1], size)
-        set_cell_text(cells[2], task.get("due", ""))
+        for task in tasks
+    ]
+    rows_needed = sum(len(lines) for lines, _ in plans)
+    if rows_needed > len(empty_rows):
+        raise MagendaError(
+            f"only {len(empty_rows)} free to-do row(s) left (capacity {TODO_ROW_CAPACITY}), "
+            f"need {rows_needed} row(s) for {len(tasks)} task(s)"
+        )
+
+    cursor = 0
+    for task, (lines, size) in zip(tasks, plans):
+        group = empty_rows[cursor : cursor + len(lines)]
+        cursor += len(lines)
+        first_cells = group[0].findall("w:tc", NS)
+        set_cell_text_lines(first_cells[1], lines)
+        set_run_size(first_cells[1], size)
+        set_cell_text(first_cells[2], task.get("due", ""))
+        if len(group) > 1:
+            for cell in first_cells:
+                _set_vmerge(cell, restart=True)
+            for row in group[1:]:
+                for cell in row.findall("w:tc", NS):
+                    set_cell_text(cell, "")
+                    _set_vmerge(cell, restart=False)
 
 
 # --------------------------------------------------------------------------
