@@ -22,12 +22,47 @@ mcp = FastMCP("magenda")
 @mcp.tool()
 def create_agenda(
     date: Annotated[str, Field(description="ISO date YYYY-MM-DD for the new agenda")],
+    meetings: Annotated[
+        list[str] | None,
+        Field(description="Titles for every meeting to add, in order — one meeting page each."),
+    ] = None,
+    daily_schedule: Annotated[
+        list[dict] | None,
+        Field(
+            description=(
+                "List of {time, text} to fill in the page-1 daily schedule. time is "
+                "24-hour HH:MM (e.g. '10:30'), must fall between 08:00 and 18:59."
+            )
+        ),
+    ] = None,
+    tasks: Annotated[
+        list[dict] | None,
+        Field(description="List of {text, due} to append to the page-1 to-do list."),
+    ] = None,
+    render: Annotated[
+        bool, Field(description="Render the finished agenda to PDF at the end of this call.")
+    ] = False,
+    include_base64: Annotated[
+        bool,
+        Field(description="When rendering, also return the PDF bytes as base64 in the response."),
+    ] = False,
 ) -> dict:
-    """Create a new daily agenda for `date` from the fixed template.
-    Populates the calendar header (day/weekday/CW/month/year) on every page
-    and the 'NEXT FOUR WEEKS' grid. Errors if an agenda for this date
-    already exists — use adjust_dates/add_meeting/etc. to edit it instead."""
-    return tools.create_agenda(date)
+    """Create a new daily agenda for `date` from the fixed template, and
+    optionally build it out completely in this single call: populates the
+    calendar header (day/weekday/CW/month/year) on every page and the 'NEXT
+    FOUR WEEKS' grid, refreshes every calendar block (as adjust_dates would),
+    adds every meeting in `meetings`, fills `daily_schedule` slots, appends
+    `tasks`, and renders to PDF if `render` is true. Errors if an agenda for
+    this date already exists. Use adjust_dates/add_meeting/add_daily_schedule/
+    add_tasks/render_pdf on their own afterwards for one-off adjustments."""
+    return tools.create_agenda(
+        date,
+        meetings=meetings,
+        daily_schedule=daily_schedule,
+        tasks=tasks,
+        render=render,
+        include_base64=include_base64,
+    )
 
 
 @mcp.tool()

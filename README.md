@@ -38,7 +38,7 @@ rendering is identical regardless of which machine runs it.
 
 | Tool | Description |
 |------|-------------|
-| `create_agenda(date)` | Create a fresh agenda for `date` (`YYYY-MM-DD`). Errors if one already exists. |
+| `create_agenda(date, meetings?, daily_schedule?, tasks?, render?, include_base64?)` | Create a fresh agenda for `date` (`YYYY-MM-DD`). Errors if one already exists. Optional args run the rest of the setup end-to-end in the same call: refresh calendar blocks, add every meeting in `meetings`, fill `daily_schedule`, append `tasks`, and render to PDF if `render` is true. |
 | `adjust_dates(date)` | Refresh every calendar header/footer block and the "next 4 weeks" grid for an existing agenda. |
 | `add_meeting(date, title)` | Fill the first blank meeting slot, or clone and append a new meeting page (calendar header + title + ruled notes table), always as a single page. A title too long for one line is cut off at the end, never wrapped. |
 | `add_daily_schedule(date, entries)` | Fill specific hour slots (`8am`..`6pm`) in the page-1 daily schedule. Each entry: `{hour, text}`. Text that doesn't fit is cut off at the end, never wrapped. |
