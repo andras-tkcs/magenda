@@ -14,6 +14,7 @@ def create_agenda(
     tasks: list[dict] | None = None,
     render: bool = False,
     include_base64: bool = False,
+    output_dir: str | None = None,
 ) -> dict:
     """Create a fresh agenda for `date` from the template, with all calendar
     fields (header dates, next-4-weeks grid) already populated for that date.
@@ -21,9 +22,10 @@ def create_agenda(
     Optionally runs the rest of the setup in the same call: refreshes every
     calendar block (as adjust_dates would), adds every title in `meetings`
     (in order, one meeting page each), fills `daily_schedule` slots, appends
-    `tasks`, and — if `render` is true — renders the result to PDF. Each step
-    is skipped if its argument is omitted, and the outcome of every step that
-    ran is included in the returned dict."""
+    `tasks`, and — if `render` is true — renders the result to PDF (written to
+    `output_dir` if given, else the default agenda store). Each step is
+    skipped if its argument is omitted, and the outcome of every step that ran
+    is included in the returned dict."""
     d = parse_date(date)
     doc = agenda_store.create(d)
     body = doc.body
@@ -50,6 +52,6 @@ def create_agenda(
         result["tasks"] = add_tasks(date, tasks)
 
     if render:
-        result["render"] = render_pdf(date, include_base64=include_base64)
+        result["render"] = render_pdf(date, include_base64=include_base64, output_dir=output_dir)
 
     return result

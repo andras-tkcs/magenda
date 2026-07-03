@@ -46,15 +46,26 @@ def create_agenda(
         bool,
         Field(description="When rendering, also return the PDF bytes as base64 in the response."),
     ] = False,
+    output_dir: Annotated[
+        str | None,
+        Field(
+            description=(
+                "When rendering, write the PDF into this directory instead of the "
+                "default agenda store (created if it doesn't exist). Ignored unless "
+                "`render` is true."
+            )
+        ),
+    ] = None,
 ) -> dict:
     """Create a new daily agenda for `date` from the fixed template, and
     optionally build it out completely in this single call: populates the
     calendar header (day/weekday/CW/month/year) on every page and the 'NEXT
     FOUR WEEKS' grid, refreshes every calendar block (as adjust_dates would),
     adds every meeting in `meetings`, fills `daily_schedule` slots, appends
-    `tasks`, and renders to PDF if `render` is true. Errors if an agenda for
-    this date already exists. Use adjust_dates/add_meeting/add_daily_schedule/
-    add_tasks/render_pdf on their own afterwards for one-off adjustments."""
+    `tasks`, and renders to PDF if `render` is true (to `output_dir` if given).
+    Errors if an agenda for this date already exists. Use adjust_dates/
+    add_meeting/add_daily_schedule/add_tasks/render_pdf on their own afterwards
+    for one-off adjustments."""
     return tools.create_agenda(
         date,
         meetings=meetings,
@@ -62,6 +73,7 @@ def create_agenda(
         tasks=tasks,
         render=render,
         include_base64=include_base64,
+        output_dir=output_dir,
     )
 
 
@@ -135,11 +147,16 @@ def render_pdf(
     include_base64: Annotated[
         bool, Field(description="Also return the PDF bytes as base64 in the response")
     ] = False,
+    output_dir: Annotated[
+        str | None,
+        Field(description="Write the PDF into this directory instead of the default agenda store (created if it doesn't exist)."),
+    ] = None,
 ) -> dict:
     """Render the agenda for `date` to PDF via headless LibreOffice, using
     the bundled Outfit fonts so the output is pixel-identical regardless of
-    which machine renders it."""
-    return tools.render_pdf(date, include_base64=include_base64)
+    which machine renders it. Pass `output_dir` to control where the PDF
+    lands."""
+    return tools.render_pdf(date, include_base64=include_base64, output_dir=output_dir)
 
 
 def main() -> None:

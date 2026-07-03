@@ -26,10 +26,12 @@ def _find_soffice() -> str:
     )
 
 
-def render_pdf(date: str, include_base64: bool = False) -> dict:
+def render_pdf(date: str, include_base64: bool = False, output_dir: str | None = None) -> dict:
     """Render the working docx for `date` to PDF via headless LibreOffice,
     after ensuring the bundled Outfit fonts are installed so the output is
-    pixel-identical regardless of which machine renders it."""
+    pixel-identical regardless of which machine renders it. By default the
+    PDF is written next to the agenda store; pass `output_dir` to write it
+    somewhere else instead (the directory is created if it doesn't exist)."""
     d = parse_date(date)
     if not agenda_store.docx_exists(d):
         raise MagendaError(f"no agenda exists for {d.isoformat()} yet; call create_agenda first")
@@ -37,7 +39,8 @@ def render_pdf(date: str, include_base64: bool = False) -> dict:
     font_setup.ensure_fonts_installed()
 
     docx_path = agenda_store.docx_path(d)
-    out_dir = agenda_store.AGENDA_DIR
+    out_dir = Path(output_dir).expanduser() if output_dir else agenda_store.AGENDA_DIR
+    out_dir.mkdir(parents=True, exist_ok=True)
     soffice = _find_soffice()
 
     result = subprocess.run(
@@ -46,7 +49,7 @@ def render_pdf(date: str, include_base64: bool = False) -> dict:
         text=True,
         timeout=120,
     )
-    pdf_path = agenda_store.pdf_path(d)
+    pdf_path = out_dir / f"{d.isoformat()}.pdf"
     if result.returncode != 0 or not pdf_path.exists():
         raise MagendaError(
             f"LibreOffice failed to render {docx_path} to PDF "
