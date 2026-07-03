@@ -1,0 +1,28 @@
+[project]
+name = "magenda"
+version = "0.1.1"
+description = "MCP server that generates a deterministic, pixel-identical daily agenda PDF from a fixed docx template."
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=1.0.0",
+    "lxml>=5.0.0",
+    "Pillow>=10.0.0",
+]
+
+[project.scripts]
+magenda = "magenda.server:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "fonttools>=4.50.0",
+    "pymupdf>=1.24.0",
+    "pyinstaller>=6.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

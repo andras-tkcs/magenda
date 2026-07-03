@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Magenda makes no network calls (no API keys, no telemetry). It does
+         spawn a local subprocess (LibreOffice's `soffice`) to render PDFs and
+         reads/writes files under ~/.magenda — neither requires a special
+         hardened-runtime entitlement beyond the defaults. -->
+</dict>
+</plist>
