@@ -104,11 +104,19 @@ def test_meeting_title_truncated_not_wrapped():
     assert "Meeting title:" in full_text
 
 
-def test_create_agenda_twice_errors():
+def test_create_agenda_twice_starts_from_scratch():
     date = "2026-09-01"
     tools.create_agenda(date)
-    with pytest.raises(MagendaError):
-        tools.create_agenda(date)
+    tools.add_meeting(date, "Should be wiped")
+
+    tools.create_agenda(date)
+
+    import fitz
+
+    result = tools.render_pdf(date)
+    doc = fitz.open(result["path"])
+    full_text = "".join(page.get_text() for page in doc)
+    assert "Should be wiped" not in full_text
 
 
 def test_adjust_dates_without_create_errors():

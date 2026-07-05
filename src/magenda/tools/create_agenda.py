@@ -18,6 +18,8 @@ def create_agenda(
 ) -> dict:
     """Create a fresh agenda for `date` from the template, with all calendar
     fields (header dates, next-4-weeks grid) already populated for that date.
+    Always starts from a blank template — if an agenda already exists for
+    `date`, it is discarded and replaced.
 
     Optionally runs the rest of the setup in the same call: refreshes every
     calendar block (as adjust_dates would), adds every title in `meetings`

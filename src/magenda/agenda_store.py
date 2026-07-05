@@ -76,12 +76,6 @@ def pdf_path(date: datetime.date) -> Path:
 
 
 def create(date: datetime.date) -> AgendaDocument:
-    target = docx_path(date)
-    if target.exists():
-        raise MagendaError(
-            f"an agenda for {date.isoformat()} already exists at {target}; "
-            "use adjust_dates/add_meeting/etc. to edit it instead of create_agenda"
-        )
     if not TEMPLATE_PATH.exists():
         raise MagendaError(f"template not found at {TEMPLATE_PATH}")
     doc = AgendaDocument.load(TEMPLATE_PATH)

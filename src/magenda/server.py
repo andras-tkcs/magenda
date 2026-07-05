@@ -63,9 +63,10 @@ def create_agenda(
     FOUR WEEKS' grid, refreshes every calendar block (as adjust_dates would),
     adds every meeting in `meetings`, fills `daily_schedule` slots, appends
     `tasks`, and renders to PDF if `render` is true (to `output_dir` if given).
-    Errors if an agenda for this date already exists. Use adjust_dates/
-    add_meeting/add_daily_schedule/add_tasks/render_pdf on their own afterwards
-    for one-off adjustments."""
+    Always starts from a blank template — if an agenda for this date already
+    exists, it is discarded and replaced. Use adjust_dates/add_meeting/
+    add_daily_schedule/add_tasks/render_pdf on their own afterwards for
+    one-off adjustments."""
     return tools.create_agenda(
         date,
         meetings=meetings,
