@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Annotated
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from magenda import tools
@@ -19,7 +20,7 @@ from magenda.xml_ops import MagendaError
 mcp = FastMCP("magenda")
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=True, idempotentHint=True))
 def create_agenda(
     date: Annotated[str, Field(description="ISO date YYYY-MM-DD for the new agenda")],
     meetings: Annotated[
@@ -78,7 +79,7 @@ def create_agenda(
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=True))
 def adjust_dates(
     date: Annotated[str, Field(description="ISO date YYYY-MM-DD of the agenda to refresh")],
 ) -> dict:
@@ -88,7 +89,7 @@ def adjust_dates(
     return tools.adjust_dates(date)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=False))
 def add_meeting(
     date: Annotated[str, Field(description="ISO date YYYY-MM-DD of the agenda to add a meeting to")],
     title: Annotated[str, Field(description="Meeting title, e.g. 'Andrea - 1:1'")],
@@ -101,7 +102,7 @@ def add_meeting(
     return tools.add_meeting(date, title)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=False))
 def add_daily_schedule(
     date: Annotated[str, Field(description="ISO date YYYY-MM-DD of the agenda to edit")],
     entries: Annotated[
@@ -122,7 +123,7 @@ def add_daily_schedule(
     return tools.add_daily_schedule(date, entries)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=False))
 def add_tasks(
     date: Annotated[str, Field(description="ISO date YYYY-MM-DD of the agenda to edit")],
     tasks: Annotated[
@@ -142,7 +143,7 @@ def add_tasks(
     return tools.add_tasks(date, tasks)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=True))
 def render_pdf(
     date: Annotated[str, Field(description="ISO date YYYY-MM-DD of the agenda to render")],
     include_base64: Annotated[
