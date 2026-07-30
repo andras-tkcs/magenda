@@ -5,7 +5,7 @@ description = "MCP server that generates a deterministic, pixel-identical daily 
 license = "Apache-2.0"
 requires-python = ">=3.11"
 dependencies = [
-    "mcp>=1.0.0",
+    "mcp>=1.0.0,<2.0.0",
     "lxml>=5.0.0",
     "Pillow>=10.0.0",
 ]
