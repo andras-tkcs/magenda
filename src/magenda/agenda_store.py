@@ -1,6 +1,9 @@
 """Load/save the working docx for a given date. The server is otherwise
 stateless: every tool call loads by date, mutates the in-memory tree, saves
-by date. The on-disk template (assets/template.docx) is never mutated."""
+by date. The working document itself lives only in this process's memory
+(`_STORE` below) -- nothing touches disk until render_pdf is explicitly
+asked to keep a copy. The on-disk template (assets/template.docx) is never
+mutated."""
 from __future__ import annotations
 
 import datetime
@@ -18,11 +21,13 @@ from magenda.xml_ops import (
     strip_meeting_notes_footer,
 )
 
-__all__ = ["FONTS_DIR", "REPO_ROOT", "TEMPLATE_PATH", "AGENDA_DIR", "AgendaDocument"]
-
-AGENDA_DIR = Path.home() / ".magenda" / "agendas"
+__all__ = ["FONTS_DIR", "REPO_ROOT", "TEMPLATE_PATH", "AgendaDocument"]
 
 DOCUMENT_XML_PATH = "word/document.xml"
+
+# Working agendas, keyed by date. Process-lifetime only -- an agenda that
+# hasn't been rendered/exported is lost if the server restarts.
+_STORE: dict[datetime.date, "AgendaDocument"] = {}
 
 
 class AgendaDocument:
@@ -67,14 +72,6 @@ class AgendaDocument:
         path.write_bytes(self.to_bytes())
 
 
-def docx_path(date: datetime.date) -> Path:
-    return AGENDA_DIR / f"{date.isoformat()}.docx"
-
-
-def pdf_path(date: datetime.date) -> Path:
-    return AGENDA_DIR / f"{date.isoformat()}.pdf"
-
-
 def create(date: datetime.date) -> AgendaDocument:
     if not TEMPLATE_PATH.exists():
         raise MagendaError(f"template not found at {TEMPLATE_PATH}")
@@ -86,17 +83,15 @@ def create(date: datetime.date) -> AgendaDocument:
 
 
 def load(date: datetime.date) -> AgendaDocument:
-    target = docx_path(date)
-    if not target.exists():
+    doc = _STORE.get(date)
+    if doc is None:
         raise MagendaError(f"no agenda exists for {date.isoformat()} yet; call create_agenda first")
-    return AgendaDocument.load(target)
+    return doc
 
 
-def save(date: datetime.date, doc: AgendaDocument) -> Path:
-    target = docx_path(date)
-    doc.save(target)
-    return target
+def save(date: datetime.date, doc: AgendaDocument) -> None:
+    _STORE[date] = doc
 
 
 def docx_exists(date: datetime.date) -> bool:
-    return docx_path(date).exists()
+    return date in _STORE

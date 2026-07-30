@@ -11,5 +11,5 @@ def add_meeting(date: str, title: str) -> dict:
 
     xml_ops.insert_meeting_page(body, title)
 
-    path = agenda_store.save(d, doc)
-    return {"date": d.isoformat(), "path": str(path), "title": title}
+    agenda_store.save(d, doc)
+    return {"date": d.isoformat(), "title": title}

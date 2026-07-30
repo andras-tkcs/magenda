@@ -4,32 +4,29 @@ suite — run it directly and eyeball the result:
 
     python scripts/manual_test.py
 
-Re-running is safe: any existing agenda for today is wiped first, so the
-script always starts from a clean template.
+The working agenda lives only in the server process's memory (this script's
+process), so re-running is always safe: each run starts from a clean
+template. The rendered PDF is written to a scratch temp dir purely so this
+script has something to open for you to inspect.
 """
 from __future__ import annotations
 
 import datetime
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from magenda import agenda_store, tools  # noqa: E402
+from magenda import tools  # noqa: E402
 
 
 def main() -> None:
     today = datetime.date.today()
     date = today.isoformat()
     print(f"=== Magenda manual test — {date} ===\n")
-
-    # Start clean so the script is safe to re-run on the same day.
-    for path in (agenda_store.docx_path(today), agenda_store.pdf_path(today)):
-        if path.exists():
-            path.unlink()
-            print(f"removed existing {path}")
 
     print("\n→ create_agenda")
     print(" ", tools.create_agenda(date))
@@ -71,7 +68,8 @@ def main() -> None:
     print("   expected: the long task shrinks to 9pt, then wraps across multiple lines")
 
     print("\n→ render_pdf")
-    result = tools.render_pdf(date)
+    out_dir = Path(tempfile.gettempdir()) / "magenda-manual-test"
+    result = tools.render_pdf(date, output_dir=str(out_dir))
     print(" ", result)
 
     pdf_path = result["path"]
