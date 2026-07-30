@@ -1,20 +1,26 @@
+import base64
 import shutil
 
 import pytest
 
-from magenda import agenda_store, tools
+from magenda import tools
 from magenda.xml_ops import MagendaError
 
 pytestmark = pytest.mark.skipif(shutil.which("soffice") is None, reason="LibreOffice not installed")
 
 
-@pytest.fixture(autouse=True)
-def isolated_agenda_dir(tmp_path, monkeypatch):
-    monkeypatch.setattr(agenda_store, "AGENDA_DIR", tmp_path)
-    yield tmp_path
+def _open_pdf(result: dict):
+    """Open a render_pdf() result regardless of whether it kept a path
+    (output_dir was given) or came back as base64 only (the default,
+    no-disk-footprint case)."""
+    import fitz
+
+    if "path" in result:
+        return fitz.open(result["path"])
+    return fitz.open(stream=base64.b64decode(result["pdf_base64"]), filetype="pdf")
 
 
-def test_full_agenda_lifecycle():
+def test_full_agenda_lifecycle(tmp_path):
     date = "2026-08-14"  # a Friday
 
     tools.create_agenda(date)
@@ -24,11 +30,9 @@ def test_full_agenda_lifecycle():
     tools.add_meeting(date, "Client handoff")
     tools.adjust_dates(date)  # re-applied to the same date — should be a no-op resync
 
-    result = tools.render_pdf(date)
+    result = tools.render_pdf(date, output_dir=str(tmp_path))
 
-    import fitz
-
-    doc = fitz.open(result["path"])
+    doc = _open_pdf(result)
     # overview (1) + meeting 1 (1) + meeting 2 (1) + closing (1). No trailing
     # blank page.
     assert len(doc) == 4
@@ -51,9 +55,13 @@ def test_full_agenda_lifecycle():
     for page in doc:
         assert page.get_text().count("14 FRIDAY") <= 1
 
-    # Determinism: re-rendering without changes reproduces the same page count and text.
+    # Determinism: re-rendering without changes reproduces the same page count
+    # and text. This call also exercises the default no-disk-footprint path
+    # (no output_dir): the result carries pdf_base64 instead of a path.
     result2 = tools.render_pdf(date)
-    doc2 = fitz.open(result2["path"])
+    assert "path" not in result2
+    assert "pdf_base64" in result2
+    doc2 = _open_pdf(result2)
     assert len(doc2) == len(doc)
     assert "".join(page.get_text() for page in doc2) == full_text
 
@@ -70,10 +78,8 @@ def test_meetings_render_one_page_each():
     tools.add_meeting(date, "Second")
     tools.add_meeting(date, "Third")
 
-    import fitz
-
     result = tools.render_pdf(date)
-    doc = fitz.open(result["path"])
+    doc = _open_pdf(result)
     # overview (1) + 3 single-page meetings + closing (1). No trailing
     # blank page.
     assert len(doc) == 5
@@ -95,10 +101,8 @@ def test_meeting_title_truncated_not_wrapped():
     )
     tools.add_meeting(date, long_title)
 
-    import fitz
-
     result = tools.render_pdf(date)
-    doc = fitz.open(result["path"])
+    doc = _open_pdf(result)
     full_text = "".join(page.get_text() for page in doc)
     assert long_title not in full_text  # truncated, not the full long title
     assert "Meeting title:" in full_text
@@ -111,10 +115,8 @@ def test_create_agenda_twice_starts_from_scratch():
 
     tools.create_agenda(date)
 
-    import fitz
-
     result = tools.render_pdf(date)
-    doc = fitz.open(result["path"])
+    doc = _open_pdf(result)
     full_text = "".join(page.get_text() for page in doc)
     assert "Should be wiped" not in full_text
 

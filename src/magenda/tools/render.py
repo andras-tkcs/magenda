@@ -1,6 +1,7 @@
 import base64
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 from magenda import agenda_store, font_setup
@@ -29,34 +30,43 @@ def _find_soffice() -> str:
 def render_pdf(date: str, include_base64: bool = False, output_dir: str | None = None) -> dict:
     """Render the working docx for `date` to PDF via headless LibreOffice,
     after ensuring the bundled Outfit fonts are installed so the output is
-    pixel-identical regardless of which machine renders it. By default the
-    PDF is written next to the agenda store; pass `output_dir` to write it
-    somewhere else instead (the directory is created if it doesn't exist)."""
+    pixel-identical regardless of which machine renders it. The conversion
+    itself happens in a throwaway temp directory that's removed as soon as
+    this call returns. By default nothing is left on disk -- the PDF bytes
+    come back as base64. Pass `output_dir` to also write a persistent copy
+    there instead (the directory is created if it doesn't exist)."""
     d = parse_date(date)
-    if not agenda_store.docx_exists(d):
-        raise MagendaError(f"no agenda exists for {d.isoformat()} yet; call create_agenda first")
+    doc = agenda_store.load(d)
 
     font_setup.ensure_fonts_installed()
-
-    docx_path = agenda_store.docx_path(d)
-    out_dir = Path(output_dir).expanduser() if output_dir else agenda_store.AGENDA_DIR
-    out_dir.mkdir(parents=True, exist_ok=True)
     soffice = _find_soffice()
 
-    result = subprocess.run(
-        [soffice, "--headless", "--norestore", "--convert-to", "pdf", "--outdir", str(out_dir), str(docx_path)],
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    pdf_path = out_dir / f"{d.isoformat()}.pdf"
-    if result.returncode != 0 or not pdf_path.exists():
-        raise MagendaError(
-            f"LibreOffice failed to render {docx_path} to PDF "
-            f"(exit {result.returncode}): {result.stderr or result.stdout}"
-        )
+    with tempfile.TemporaryDirectory(prefix="magenda-") as tmp:
+        tmp_dir = Path(tmp)
+        docx_path = tmp_dir / f"{d.isoformat()}.docx"
+        doc.save(docx_path)
 
-    response = {"date": d.isoformat(), "path": str(pdf_path)}
-    if include_base64:
-        response["pdf_base64"] = base64.b64encode(pdf_path.read_bytes()).decode("ascii")
+        result = subprocess.run(
+            [soffice, "--headless", "--norestore", "--convert-to", "pdf", "--outdir", str(tmp_dir), str(docx_path)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        pdf_tmp_path = tmp_dir / f"{d.isoformat()}.pdf"
+        if result.returncode != 0 or not pdf_tmp_path.exists():
+            raise MagendaError(
+                f"LibreOffice failed to render the {d.isoformat()} agenda to PDF "
+                f"(exit {result.returncode}): {result.stderr or result.stdout}"
+            )
+        pdf_bytes = pdf_tmp_path.read_bytes()
+
+    response: dict = {"date": d.isoformat()}
+    if output_dir:
+        out_dir = Path(output_dir).expanduser()
+        out_dir.mkdir(parents=True, exist_ok=True)
+        final_path = out_dir / f"{d.isoformat()}.pdf"
+        final_path.write_bytes(pdf_bytes)
+        response["path"] = str(final_path)
+    if include_base64 or not output_dir:
+        response["pdf_base64"] = base64.b64encode(pdf_bytes).decode("ascii")
     return response

@@ -51,9 +51,9 @@ def create_agenda(
         str | None,
         Field(
             description=(
-                "When rendering, write the PDF into this directory instead of the "
-                "default agenda store (created if it doesn't exist). Ignored unless "
-                "`render` is true."
+                "When rendering, also write the PDF into this directory (created if "
+                "it doesn't exist). Ignored unless `render` is true. If omitted, "
+                "nothing is written to disk -- the PDF is only returned as base64."
             )
         ),
     ] = None,
@@ -63,9 +63,11 @@ def create_agenda(
     calendar header (day/weekday/CW/month/year) on every page and the 'NEXT
     FOUR WEEKS' grid, refreshes every calendar block (as adjust_dates would),
     adds every meeting in `meetings`, fills `daily_schedule` slots, appends
-    `tasks`, and renders to PDF if `render` is true (to `output_dir` if given).
-    Always starts from a blank template — if an agenda for this date already
-    exists, it is discarded and replaced. Use adjust_dates/add_meeting/
+    `tasks`, and renders to PDF if `render` is true (also written to
+    `output_dir` if given). Always starts from a blank template — if an
+    agenda for this date already exists, it is discarded and replaced. The
+    working agenda lives only in this server's memory until rendered/exported
+    -- nothing touches disk otherwise. Use adjust_dates/add_meeting/
     add_daily_schedule/add_tasks/render_pdf on their own afterwards for
     one-off adjustments."""
     return tools.create_agenda(
@@ -79,17 +81,19 @@ def create_agenda(
     )
 
 
-@mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=True))
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
 def adjust_dates(
     date: Annotated[str, Field(description="ISO date YYYY-MM-DD of the agenda to refresh")],
 ) -> dict:
     """Regenerate every calendar header/footer block (top of every page, and
     the footer calendar embedded on each meeting page) and the 'NEXT FOUR
-    WEEKS' grid for an agenda that already exists on disk."""
+    WEEKS' grid for an agenda that already exists (create_agenda must have
+    been called for this date first). Only mutates the in-memory working
+    agenda -- nothing touches disk."""
     return tools.adjust_dates(date)
 
 
-@mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=False))
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=False))
 def add_meeting(
     date: Annotated[str, Field(description="ISO date YYYY-MM-DD of the agenda to add a meeting to")],
     title: Annotated[str, Field(description="Meeting title, e.g. 'Andrea - 1:1'")],
@@ -98,11 +102,12 @@ def add_meeting(
     new meeting page (calendar header + title + ruled notes table) and
     appends it before the closing 'Further notes' page. Always renders as a
     single page. A title too long to fit on one line is cut off at the end,
-    never wrapped."""
+    never wrapped. Only mutates the in-memory working agenda -- nothing
+    touches disk."""
     return tools.add_meeting(date, title)
 
 
-@mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=False))
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=False))
 def add_daily_schedule(
     date: Annotated[str, Field(description="ISO date YYYY-MM-DD of the agenda to edit")],
     entries: Annotated[
@@ -119,11 +124,12 @@ def add_daily_schedule(
     ],
 ) -> dict:
     """Fill specific time slots in the page-1 daily schedule (right column).
-    Slots not mentioned are left untouched; call again to fill more."""
+    Slots not mentioned are left untouched; call again to fill more. Only
+    mutates the in-memory working agenda -- nothing touches disk."""
     return tools.add_daily_schedule(date, entries)
 
 
-@mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=False))
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=False))
 def add_tasks(
     date: Annotated[str, Field(description="ISO date YYYY-MM-DD of the agenda to edit")],
     tasks: Annotated[
@@ -139,7 +145,8 @@ def add_tasks(
 ) -> dict:
     """Append tasks to the page-1 to-do list (left column), filling the
     first empty rows top-down. Errors if there isn't enough free capacity
-    (18 rows total)."""
+    (18 rows total). Only mutates the in-memory working agenda -- nothing
+    touches disk."""
     return tools.add_tasks(date, tasks)
 
 
@@ -147,17 +154,31 @@ def add_tasks(
 def render_pdf(
     date: Annotated[str, Field(description="ISO date YYYY-MM-DD of the agenda to render")],
     include_base64: Annotated[
-        bool, Field(description="Also return the PDF bytes as base64 in the response")
+        bool,
+        Field(
+            description=(
+                "Also return the PDF bytes as base64 in the response. Implied "
+                "when `output_dir` is omitted, since that's otherwise the only "
+                "way to get the result."
+            )
+        ),
     ] = False,
     output_dir: Annotated[
         str | None,
-        Field(description="Write the PDF into this directory instead of the default agenda store (created if it doesn't exist)."),
+        Field(
+            description=(
+                "Also write the PDF into this directory (created if it doesn't "
+                "exist). If omitted, nothing is written to disk -- the PDF is "
+                "only returned as base64."
+            )
+        ),
     ] = None,
 ) -> dict:
     """Render the agenda for `date` to PDF via headless LibreOffice, using
     the bundled Outfit fonts so the output is pixel-identical regardless of
-    which machine renders it. Pass `output_dir` to control where the PDF
-    lands."""
+    which machine renders it. The conversion runs in a throwaway temp
+    directory that's deleted as soon as this call returns; pass `output_dir`
+    to also keep a persistent copy there."""
     return tools.render_pdf(date, include_base64=include_base64, output_dir=output_dir)
 
 

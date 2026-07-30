@@ -39,8 +39,8 @@ def create_agenda(
     n4w_table = xml_ops.find_next_four_weeks_table(body)
     xml_ops.apply_next_four_weeks(n4w_table, calendar_math.next_four_weeks(d))
 
-    path = agenda_store.save(d, doc)
-    result: dict = {"date": d.isoformat(), "path": str(path)}
+    agenda_store.save(d, doc)
+    result: dict = {"date": d.isoformat()}
 
     result["adjust_dates"] = adjust_dates(date)
 

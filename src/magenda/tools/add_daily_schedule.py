@@ -16,5 +16,5 @@ def add_daily_schedule(date: str, entries: list[dict]) -> dict:
     table = xml_ops.find_schedule_table(body)
     xml_ops.fill_schedule_entries(table, entries)
 
-    path = agenda_store.save(d, doc)
-    return {"date": d.isoformat(), "path": str(path), "slots_filled": len(entries)}
+    agenda_store.save(d, doc)
+    return {"date": d.isoformat(), "slots_filled": len(entries)}

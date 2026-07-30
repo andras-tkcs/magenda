@@ -18,5 +18,5 @@ def adjust_dates(date: str) -> dict:
     n4w_table = xml_ops.find_next_four_weeks_table(body)
     xml_ops.apply_next_four_weeks(n4w_table, calendar_math.next_four_weeks(d))
 
-    path = agenda_store.save(d, doc)
-    return {"date": d.isoformat(), "path": str(path), "calendar_blocks_updated": len(blocks)}
+    agenda_store.save(d, doc)
+    return {"date": d.isoformat(), "calendar_blocks_updated": len(blocks)}

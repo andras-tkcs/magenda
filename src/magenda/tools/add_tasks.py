@@ -13,5 +13,5 @@ def add_tasks(date: str, tasks: list[dict]) -> dict:
     table = xml_ops.find_todo_table(body)
     xml_ops.append_tasks(table, tasks)
 
-    path = agenda_store.save(d, doc)
-    return {"date": d.isoformat(), "path": str(path), "tasks_added": len(tasks)}
+    agenda_store.save(d, doc)
+    return {"date": d.isoformat(), "tasks_added": len(tasks)}
