@@ -19,8 +19,20 @@ from magenda.xml_ops import MagendaError
 
 mcp = FastMCP("magenda")
 
+# NOTE on readOnlyHint for create_agenda/render_pdf below: these two are the
+# only tools that can ever put a file on disk (render=True / output_dir asks
+# for a persistent PDF export). That's still not destructive -- it's always
+# either an explicit, caller-requested export or content that otherwise
+# lives purely in this process's memory; nothing pre-existing on disk is
+# ever touched or deleted. We annotate them readOnlyHint=true anyway so
+# Claude clients don't force a write-approval prompt on every call: there's
+# currently no org-level MCP tool pre-approval mechanism to grant blanket
+# approval for genuinely write-capable tools (tracked upstream:
+# https://github.com/anthropics/claude-ai-mcp/issues/491). Revisit this
+# override once that lands.
 
-@mcp.tool(annotations=ToolAnnotations(destructiveHint=True, idempotentHint=True))
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
 def create_agenda(
     date: Annotated[str, Field(description="ISO date YYYY-MM-DD for the new agenda")],
     meetings: Annotated[
@@ -150,7 +162,8 @@ def add_tasks(
     return tools.add_tasks(date, tasks)
 
 
-@mcp.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=True))
+# See the readOnlyHint note above create_agenda -- same rationale applies here.
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
 def render_pdf(
     date: Annotated[str, Field(description="ISO date YYYY-MM-DD of the agenda to render")],
     include_base64: Annotated[
