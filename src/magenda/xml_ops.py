@@ -7,6 +7,14 @@ copied from the template's own runs, or (where a section's row/page count is
 data-driven, so no single template instance survives in the saved doc to
 clone from — the delegated-tasks rows and pages, the page-break paragraph)
 built from values transcribed byte-for-byte out of the template.
+
+The calendar chrome (day/weekday/CW/month/year) lives in the document's Word
+header part (word/header1.xml), not in the body — the template defines
+exactly one instance there and Word/LibreOffice repeat it on every page via
+each section's (inherited) headerReference, so it only ever needs editing
+once (see find_calendar_block / agenda_store.AgendaDocument.header). The body
+itself has no per-page calendar tables to clone, unlike the pre-header-based
+template this replaced.
 """
 from __future__ import annotations
 
@@ -195,7 +203,7 @@ def _is_calendar_title_row(tr: etree._Element) -> bool:
         font = rpr.find("w:rFonts", NS)
         sz = rpr.find("w:sz", NS)
         if (
-            color is not None and color.get(qn("w:val")) == "0DB04B"
+            color is not None and color.get(qn("w:val")) == "215E99"
             and font is not None and font.get(qn("w:ascii")) == "Outfit Black"
             and sz is not None and sz.get(qn("w:val")) == "36"
         ):
@@ -203,17 +211,16 @@ def _is_calendar_title_row(tr: etree._Element) -> bool:
     return False
 
 
-def find_calendar_blocks(body: etree._Element) -> list[CalendarBlock]:
-    """Find every calendar header/footer block in document order, regardless
-    of which table it lives in (top-of-page headers and the embedded
-    bottom-of-page footer share the exact same row signature)."""
-    blocks: list[CalendarBlock] = []
-    for tbl in body.findall(".//w:tbl", NS):
+def find_calendar_block(header: etree._Element) -> CalendarBlock:
+    """The single calendar title/weekday/day-number block living in the
+    document's Word header part (see agenda_store.AgendaDocument.header) —
+    edited once here rather than once per page."""
+    for tbl in header.findall(".//w:tbl", NS):
         rows = tbl.findall("w:tr", NS)
         for i, tr in enumerate(rows):
             if _is_calendar_title_row(tr) and i + 2 < len(rows):
-                blocks.append(CalendarBlock(title_row=tr, dayno_row=rows[i + 2]))
-    return blocks
+                return CalendarBlock(title_row=tr, dayno_row=rows[i + 2])
+    raise MagendaError("could not locate the calendar header block in the document header")
 
 
 def apply_calendar_block(block: CalendarBlock, fields: dict) -> None:
@@ -459,8 +466,8 @@ MEETING_TITLE_PREFIX = "Meeting title: "
 FURTHER_NOTES_TEXT = "Further notes from today"
 
 # From the template's fixed sectPr/settings.xml — see assets/template.docx:
-# pgSz.w=11900, pgMar.left=1134, pgMar.right=567 -> 11900-1134-567=10199.
-PAGE_CONTENT_WIDTH_TWIPS = 10199
+# pgSz.w=11906, pgMar.left=1134, pgMar.right=567 -> 11906-1134-567=10205.
+PAGE_CONTENT_WIDTH_TWIPS = 10205
 DEFAULT_TAB_STOP_TWIPS = 720
 
 
@@ -468,18 +475,20 @@ def _paragraph_text(p: etree._Element) -> str:
     return "".join(t.text or "" for t in p.findall(".//w:t", NS))
 
 
-def find_meeting_unit_template(body: etree._Element) -> tuple[etree._Element, etree._Element, etree._Element]:
-    """Return (calendar_header_table, title_paragraph, notes_table) for the
-    first meeting page in the document — used both as the clone source and,
-    when its title is still blank, as the first meeting slot to fill in place."""
+def find_meeting_unit_template(body: etree._Element) -> tuple[etree._Element, etree._Element]:
+    """Return (title_paragraph, notes_table) for the first meeting page in
+    the document — used both as the clone source and, when its title is
+    still blank, as the first meeting slot to fill in place. The calendar
+    header isn't part of this unit — it lives in the Word header part (see
+    find_calendar_block) and repeats on every page on its own, so there's
+    nothing to clone for it here."""
     children = list(body)
     for i, el in enumerate(children):
         if el.tag == qn("w:p") and _paragraph_text(el).startswith(MEETING_TITLE_PREFIX):
-            header_table = children[i - 1]
             notes_table = children[i + 1]
-            if header_table.tag != qn("w:tbl") or notes_table.tag != qn("w:tbl"):
+            if notes_table.tag != qn("w:tbl"):
                 raise MagendaError("meeting page template has an unexpected shape")
-            return header_table, el, notes_table
+            return el, notes_table
     raise MagendaError("could not locate a meeting page template in this agenda")
 
 
@@ -534,35 +543,8 @@ def blank_meeting_title_slot(body: etree._Element) -> None:
     """Called once by create_agenda: the template ships with one pre-filled
     example meeting page. Clear its title so the first add_meeting call fills
     this existing slot in place instead of appending a duplicate page."""
-    _, title_para, _ = find_meeting_unit_template(body)
+    title_para, _ = find_meeting_unit_template(body)
     set_meeting_title(title_para, "")
-
-
-def strip_meeting_notes_footer(body: etree._Element) -> None:
-    """Called once by create_agenda: the template's meeting notes table
-    ships with a trailing 3-row calendar block (title/weekday/day-number)
-    baked onto its end. In the stock single-meeting template that's how the
-    closing 'Further notes' page picked up a header for free, by natural
-    page overflow. ensure_further_notes_page_break() now gives the closing
-    page its own explicit header instead, which makes this trailing block
-    dead weight — left in place it overflows onto its own near-empty page
-    after every meeting, worse once meetings are cloned since every clone
-    carries a copy.
-
-    Drops one extra ruled-line row beyond that 3-row block (4 total):
-    empirically, a meeting page reached via the hard page break that
-    insert_meeting_page/ensure_further_notes_page_break insert needs very
-    slightly more room than the same content does when it merely follows
-    natural overflow (as the template's first, pre-filled meeting page
-    does) — 23 ruled rows plus the header/title overflows by a hair and
-    produces a fully blank extra page, 22 fits cleanly either way.
-
-    Idempotent: a no-op if already stripped."""
-    _, _, notes_table = find_meeting_unit_template(body)
-    rows = notes_table.findall("w:tr", NS)
-    if len(rows) >= 4 and _is_calendar_title_row(rows[-3]):
-        for row in rows[-4:]:
-            notes_table.remove(row)
 
 
 def find_further_notes_paragraph(body: etree._Element) -> etree._Element:
@@ -586,91 +568,46 @@ def _page_break_paragraph() -> etree._Element:
     return p
 
 
-def _is_calendar_header_table(el: etree._Element) -> bool:
-    return (
-        el.tag == qn("w:tbl")
-        and len(el.findall("w:tr", NS)) == 3
-        and _is_calendar_title_row(el.findall("w:tr", NS)[0])
-    )
+def _has_page_break(p: etree._Element) -> bool:
+    return any(b.get(qn("w:type")) == "page" for b in p.findall(".//w:br", NS))
 
 
 def ensure_further_notes_page_break(body: etree._Element) -> None:
-    """Called once by create_agenda: force the closing 'Further notes' page
-    to always start on its own new page, regardless of how much the last
-    meeting's own content happens to overflow. In the stock template, the
-    closing page has no calendar header table of its own — it relies on
-    borrowing whatever meeting happens to be last's trailing footer-calendar
-    rows, which land on the same page purely by natural overflow. Forcing a
-    hard page break breaks that accidental coupling, so give the closing
-    page its own calendar header (cloned from the same source as every other
-    page) to keep every page's look consistent, and put the page break
-    directly before that header rather than before the 'Further notes'
-    title, so the header and title stay together on the new page.
-
-    The closing page's own ruled-notes table ships with 23 rows in the
-    template — fine when the page is reached by natural overflow (as in the
-    stock template), but the same empirically-observed overflow described in
-    strip_meeting_notes_footer applies once it's reached via a hard page
-    break instead: 23 rows plus the header/title is a hair too tall and
-    produces a fully blank trailing page; 22 fits cleanly. Trim one row to
-    match."""
+    """Called once by create_agenda: guarantee the closing 'Further notes'
+    page always starts on its own new page, regardless of how much the last
+    meeting's own content happens to overflow. The template already ships
+    with an explicit page break directly before 'Further notes' (there's no
+    per-page calendar header table left in the body to keep in sync here —
+    see the module docstring), so this is normally a no-op; it only adds one
+    if a hand-built document is missing it. Idempotent."""
     para = find_further_notes_paragraph(body)
-
-    header = para.getprevious()
-    if not _is_calendar_header_table(header):
-        header_table, _, _ = find_meeting_unit_template(body)
-        para.addprevious(copy.deepcopy(header_table))
-        header = para.getprevious()
-
-    before_header = header.getprevious()
-    already_has_break = before_header is not None and any(
-        b.get(qn("w:type")) == "page" for b in before_header.findall(".//w:br", NS)
-    )
-    if not already_has_break:
-        header.addprevious(_page_break_paragraph())
-
-    closing_table = para.getnext()
-    if closing_table is not None and closing_table.tag == qn("w:tbl"):
-        rows = closing_table.findall("w:tr", NS)
-        if len(rows) > 22:
-            closing_table.remove(rows[-1])
-
-
-def _new_meeting_insertion_anchor(body: etree._Element) -> etree._Element:
-    """Where a newly cloned meeting page should be spliced in: right before
-    the closing page's own break+header block if create_agenda already added
-    one (so new meetings land before the closing page, not sandwiched
-    between it and 'Further notes'), otherwise right before 'Further notes'
-    itself."""
-    para = find_further_notes_paragraph(body)
-    header = para.getprevious()
-    if not _is_calendar_header_table(header):
-        return para
-    before_header = header.getprevious()
-    if before_header is not None and any(
-        b.get(qn("w:type")) == "page" for b in before_header.findall(".//w:br", NS)
-    ):
-        return before_header
-    return header
+    before = para.getprevious()
+    if before is None or before.tag != qn("w:p") or not _has_page_break(before):
+        para.addprevious(_page_break_paragraph())
 
 
 def insert_meeting_page(body: etree._Element, title: str) -> None:
     """Fill the first meeting page if its title slot is still blank
     (left that way by create_agenda); otherwise clone it and append a new
     meeting page before the closing 'Further notes' page."""
-    header_table, title_para, notes_table = find_meeting_unit_template(body)
+    title_para, notes_table = find_meeting_unit_template(body)
     if meeting_title_text(title_para) == "":
         set_meeting_title(title_para, title)
         return
 
-    new_header = copy.deepcopy(header_table)
     new_title_para = copy.deepcopy(title_para)
     new_notes = copy.deepcopy(notes_table)
     set_meeting_title(new_title_para, title)
 
-    anchor = _new_meeting_insertion_anchor(body)
+    # Insert right before the page break that leads into 'Further notes' (so
+    # new meetings land before the closing page, not after it) — falling
+    # back to right before 'Further notes' itself if that break is somehow
+    # missing.
+    further_notes = find_further_notes_paragraph(body)
+    before = further_notes.getprevious()
+    anchor = before if before is not None and before.tag == qn("w:p") and _has_page_break(before) else further_notes
+
     anchor.addprevious(_page_break_paragraph())
-    anchor.addprevious(new_header)
     anchor.addprevious(new_title_para)
     anchor.addprevious(new_notes)
 
@@ -679,30 +616,32 @@ def insert_meeting_page(body: etree._Element, title: str) -> None:
 # Delegated tasks page(s)
 # --------------------------------------------------------------------------
 
-DELEGATED_HEADER_LABELS = ("Task & cadence", "Owner", "Status & notes")
+DELEGATED_HEADER_LABELS = ("", "Task & cadence", "Owner", "Status")
 DELEGATED_MARK_FILL = "D6FCEC"
+DELEGATED_HEADER_FILL = "D9D9D9"
 DELEGATED_CADENCE_LABELS = {"daily": "Daily", "weekly": "Weekly", "monthly": "Monthly"}
 DELEGATED_CADENCE_ORDER = {"daily": 0, "weekly": 1, "monthly": 2}
 DELEGATED_TASK_MAX_FONT_SIZE = 20  # half-points (10pt) — the template's own default
 DELEGATED_TASK_MIN_FONT_SIZE = 16  # half-points (8pt) — floor before wrapping kicks in
 DELEGATED_CADENCE_FONT_SIZE = 16  # half-points (8pt) — small label above the task text
 DELEGATED_BULLET_PREFIX = "• "  # bullet + a thin space, for a minimal bullet-to-text gap
-DELEGATED_NOTES_FREE_SPACE_TWIPS = 1000  # ~2cm blank room below status for handwritten updates
 
-# Determined empirically by rendering (see render.py / the test suite) the
-# same way the meeting-notes row counts were: how many data rows of this
-# exact shape (font, spacing, free-space-for-notes) fit under the page's
-# calendar header + column header before LibreOffice pushes the next row to
-# a fresh page. Every row is ~93pt tall regardless of task-text length: that
-# height is set by the status cell's free-space paragraph, which dwarfs a
-# wrapped 2-3 line task or a downsized owner name, so this holds even when
-# those wrap.
-DELEGATED_ROWS_PER_PAGE = 7
+# Determined empirically by rendering: rows no longer have a fixed height
+# (the previous template's ~2cm blank free-space-for-notes paragraph is
+# gone -- handwritten notes now live in the page's own footer, "Notes and
+# updates", word/footer1.xml) so a row's actual height depends on how much
+# its task/status text wraps. 8 is calibrated against a realistic worst
+# case -- every column (task, owner, 2-line status) wrapping to its widest
+# plausible content -- so it stays safe even when a page's tasks happen to
+# be unusually verbose, at the cost of some unused room on a page of short
+# one-line tasks.
+DELEGATED_ROWS_PER_PAGE = 8
 
 _THICK_BORDER_SZ = 24
 _THIN_BORDER_SZ = 4
 
-_DELEGATED_COLUMN_WIDTHS = {"task": 3155, "owner": 1334, "status": 5859}
+_DELEGATED_COLUMN_WIDTHS = {"number": 615, "task": 3464, "owner": 1689, "status": 4580}
+_DELEGATED_COLUMN_ORDER = ("number", "task", "owner", "status")
 
 
 def _is_delegated_tasks_table(tbl: etree._Element) -> bool:
@@ -710,7 +649,7 @@ def _is_delegated_tasks_table(tbl: etree._Element) -> bool:
     if not rows:
         return False
     cells = rows[0].findall("w:tc", NS)
-    if len(cells) != 3:
+    if len(cells) != 4:
         return False
     return tuple(cell_text(c) for c in cells) == DELEGATED_HEADER_LABELS
 
@@ -721,20 +660,90 @@ def find_delegated_tables(body: etree._Element) -> list[etree._Element]:
     return [tbl for tbl in body.findall("w:tbl", NS) if _is_delegated_tasks_table(tbl)]
 
 
-def _delegated_page_unit(
-    tasks_table: etree._Element,
-) -> tuple[etree._Element, etree._Element, etree._Element]:
-    """(calendar_header_table, spacer_paragraph, tasks_table) for the page a
-    delegated-tasks table lives on."""
+def _delegated_page_unit(tasks_table: etree._Element) -> tuple[etree._Element, etree._Element]:
+    """(spacer_paragraph, tasks_table) for a delegated-tasks table. There's
+    no per-page calendar header to account for here (see the module
+    docstring) -- just the blank paragraph the template leaves above the
+    table for a little breathing room under the page's Word header."""
     spacer = tasks_table.getprevious()
-    header = spacer.getprevious() if spacer is not None else None
-    if spacer is None or spacer.tag != qn("w:p") or header is None or not _is_calendar_header_table(header):
+    if spacer is None or spacer.tag != qn("w:p"):
         raise MagendaError("delegated tasks page has an unexpected shape")
-    return header, spacer, tasks_table
+    return spacer, tasks_table
 
 
 def _paragraph_is_blank(p: etree._Element) -> bool:
     return not "".join(t.text or "" for t in p.findall(".//w:t", NS)).strip()
+
+
+def _find_page1_section_end(body: etree._Element) -> etree._Element:
+    """The paragraph ending page 1's own two-column section (headerReference
+    only, no footerReference, section type "continuous") -- always present
+    in the template's fixed skeleton, totally independent of whether any
+    delegated tasks currently exist. Whatever immediately follows it is
+    either the delegated-tasks section (spacer + table(s) + that section's
+    own footerReference-carrying boundary paragraph) if one currently
+    exists, or straight into the meetings section if not -- the fixed point
+    the whole delegated-tasks section is spliced in after / removed back
+    to."""
+    for p in body.findall("w:p", NS):
+        sectPr = p.find("w:pPr/w:sectPr", NS)
+        if sectPr is not None and sectPr.find("w:headerReference", NS) is not None:
+            return p
+    raise MagendaError("could not locate the end of page 1's own section")
+
+
+def _find_delegated_section_boundary(body: etree._Element) -> etree._Element:
+    """The paragraph carrying the sectPr that closes the delegated-tasks
+    section -- the point up to which word/footer1.xml's "Notes and updates"
+    footer applies. Only present while at least one delegated-tasks table
+    exists (see remove_delegated_tasks_page / _insert_delegated_tasks_page)
+    -- a lone empty section between page 1 and the meetings section would
+    otherwise still consume a blank page of its own (an OOXML section, even
+    with no real content, still forces the page break its own type implies),
+    so the whole section is added and removed as one unit rather than left
+    in place empty. Identified as the only paragraph-embedded sectPr with a
+    footerReference -- the other paragraph-embedded sectPr (page 1's own,
+    see _find_page1_section_end) only carries a headerReference, and the
+    document's final section (the meetings/closing page's own footer2
+    reference) is the body's own trailing sectPr, not a paragraph's."""
+    for p in body.findall("w:p", NS):
+        sectPr = p.find("w:pPr/w:sectPr", NS)
+        if sectPr is not None and sectPr.find("w:footerReference", NS) is not None:
+            return p
+    raise MagendaError("could not locate the delegated-tasks section boundary")
+
+
+# Transcribed byte-for-byte from the template's own delegated-tasks section
+# boundary (see assets/template.docx, word/document.xml) -- the exact
+# pgSz/pgMar/cols the template uses for this section, and the relationship
+# id word/_rels/document.xml.rels binds to footer1.xml ("Notes and
+# updates"). Needed here (rather than only ever cloned from the template)
+# because the whole section is removed when no delegated tasks exist (see
+# remove_delegated_tasks_page) -- there is then no instance left in the
+# document to clone from once add_delegated_tasks needs it again.
+_DELEGATED_SECTION_FOOTER_RID = "rId8"
+_R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+
+
+def _delegated_section_boundary_paragraph() -> etree._Element:
+    p = etree.Element(qn("w:p"))
+    pPr = etree.SubElement(p, qn("w:pPr"))
+    sectPr = etree.SubElement(pPr, qn("w:sectPr"))
+    footerRef = etree.SubElement(sectPr, qn("w:footerReference"))
+    footerRef.set(qn("w:type"), "default")
+    footerRef.set(f"{{{_R_NS}}}id", _DELEGATED_SECTION_FOOTER_RID)
+    pgSz = etree.SubElement(sectPr, qn("w:pgSz"))
+    pgSz.set(qn("w:w"), "11906")
+    pgSz.set(qn("w:h"), "16838")
+    pgMar = etree.SubElement(sectPr, qn("w:pgMar"))
+    for attr, val in (
+        ("top", "567"), ("right", "567"), ("bottom", "567"), ("left", "1134"),
+        ("header", "0"), ("footer", "0"), ("gutter", "0"),
+    ):
+        pgMar.set(qn(f"w:{attr}"), val)
+    cols = etree.SubElement(sectPr, qn("w:cols"))
+    cols.set(qn("w:space"), "720")
+    return p
 
 
 def remove_delegated_tasks_page(body: etree._Element) -> None:
@@ -746,25 +755,26 @@ def remove_delegated_tasks_page(body: etree._Element) -> None:
     _insert_delegated_tasks_page) the first time it's actually needed, and
     rebuild_delegated_tasks removes it again if it's ever emptied back out.
 
-    Also drops the forced page break (plus any blank spacer paragraph)
-    immediately following the table: that break only exists to end the
-    delegated page's own — much-shorter-than-a-page — content and force a
-    fresh page for whatever comes next (normally meeting page 1). Leaving it
-    behind once the delegated page is gone forces an extra blank page,
-    because page 1's own content already ends exactly at a page boundary on
-    its own (natural overflow, same as the pre-delegated-page template)."""
+    Removes the whole delegated-tasks section as one unit: the leading
+    spacer paragraph, every table (plus any page breaks/spacers between
+    them if the list had spanned multiple pages), and the section's own
+    boundary paragraph (see _find_delegated_section_boundary) -- unlike a
+    plain page break, a section boundary left in place with nothing before
+    it still consumes a blank page of its own, so it has to go too rather
+    than stay behind as an always-present anchor."""
     tables = find_delegated_tables(body)
     if not tables:
         return
-    header, spacer, table = _delegated_page_unit(tables[0])
-    trailing = table.getnext()
-    body.remove(table)
-    body.remove(spacer)
-    body.remove(header)
-    while trailing is not None and trailing.tag == qn("w:p") and _paragraph_is_blank(trailing):
-        nxt = trailing.getnext()
-        body.remove(trailing)
-        trailing = nxt
+    boundary = _find_delegated_section_boundary(body)
+    spacer, _first_table = _delegated_page_unit(tables[0])
+    node = spacer
+    while node is not None:
+        nxt = node.getnext()
+        is_boundary = node is boundary
+        body.remove(node)
+        if is_boundary:
+            break
+        node = nxt
 
 
 def _delegated_header_rpr() -> etree._Element:
@@ -776,7 +786,7 @@ def _delegated_header_rpr() -> etree._Element:
     etree.SubElement(rpr, qn("w:bCs"))
     etree.SubElement(rpr, qn("w:caps"))
     color = etree.SubElement(rpr, qn("w:color"))
-    color.set(qn("w:val"), "F95738")
+    color.set(qn("w:val"), "BF4E14")
     sz = etree.SubElement(rpr, qn("w:sz"))
     sz.set(qn("w:val"), "28")
     szCs = etree.SubElement(rpr, qn("w:szCs"))
@@ -785,10 +795,10 @@ def _delegated_header_rpr() -> etree._Element:
 
 
 def _build_delegated_table_shell() -> etree._Element:
-    """A delegated-tasks table with just its header row (Task & cadence /
-    Owner / Status & notes), transcribed byte-for-byte from the template's
-    own table. Used to (re-)create the delegated tasks page from scratch
-    when it doesn't currently exist in the document — see
+    """A delegated-tasks table with just its header row (a blank row-number
+    column, then Task & cadence / Owner / Status), transcribed byte-for-byte
+    from the template's own table. Used to (re-)create the delegated tasks
+    page from scratch when it doesn't currently exist in the document — see
     _insert_delegated_tasks_page — since a variable, per-date number of data
     rows means there's no single template table left in the saved doc once
     the page has been removed (remove_delegated_tasks_page) or spans more
@@ -808,18 +818,23 @@ def _build_delegated_table_shell() -> etree._Element:
         b.set(qn("w:space"), "0")
         b.set(qn("w:color"), "auto")
     tblGrid = etree.SubElement(tbl, qn("w:tblGrid"))
-    for key in ("task", "owner", "status"):
+    for key in _DELEGATED_COLUMN_ORDER:
         col = etree.SubElement(tblGrid, qn("w:gridCol"))
         col.set(qn("w:w"), str(_DELEGATED_COLUMN_WIDTHS[key]))
 
     header_row = etree.SubElement(tbl, qn("w:tr"))
-    for key, label in (("task", "Task & cadence"), ("owner", "Owner"), ("status", "Status & notes")):
+    labels = {"number": "", "task": "Task & cadence", "owner": "Owner", "status": "Status"}
+    for key in _DELEGATED_COLUMN_ORDER:
         tc = etree.SubElement(header_row, qn("w:tc"))
         tcPr = etree.SubElement(tc, qn("w:tcPr"))
         tcW = etree.SubElement(tcPr, qn("w:tcW"))
         tcW.set(qn("w:w"), str(_DELEGATED_COLUMN_WIDTHS[key]))
         tcW.set(qn("w:type"), "dxa")
         _tc_borders(tcPr, _THICK_BORDER_SZ, _THICK_BORDER_SZ)
+        shd = etree.SubElement(tcPr, qn("w:shd"))
+        shd.set(qn("w:val"), "clear")
+        shd.set(qn("w:color"), "auto")
+        shd.set(qn("w:fill"), DELEGATED_HEADER_FILL)
         p = etree.SubElement(tc, qn("w:p"))
         pPr = etree.SubElement(p, qn("w:pPr"))
         spacing = etree.SubElement(pPr, qn("w:spacing"))
@@ -828,50 +843,49 @@ def _build_delegated_table_shell() -> etree._Element:
         spacing.set(qn("w:lineRule"), "auto")
         jc = etree.SubElement(pPr, qn("w:jc"))
         jc.set(qn("w:val"), "center")
-        r = etree.SubElement(p, qn("w:r"))
-        r.append(_delegated_header_rpr())
-        t = etree.SubElement(r, qn("w:t"))
-        t.text = label
+        label = labels[key]
+        if label:
+            r = etree.SubElement(p, qn("w:r"))
+            r.append(_delegated_header_rpr())
+            t = etree.SubElement(r, qn("w:t"))
+            t.text = label
     return tbl
 
 
-def _insert_delegated_tasks_page(
-    body: etree._Element,
-) -> tuple[etree._Element, etree._Element, etree._Element]:
-    """Create a fresh, empty delegated-tasks page (calendar header + spacer +
-    table-with-header-row-only, followed by a forced page break) and splice
-    it in right before the meeting section — where the template's own
-    delegated page lives — returning its (header, spacer, table) triple. The
-    calendar header is cloned from meeting page 1's own header (always
-    present, identical shape) rather than authored from scratch, same as
-    every other cloned header in this module. The trailing break is always
-    freshly created here (never reused) — remove_delegated_tasks_page always
-    removes it along with the page, since without it, whatever follows would
-    just continue on the same page as this one, which is much shorter than a
-    full page."""
-    meeting_header, _, _ = find_meeting_unit_template(body)
-    header = copy.deepcopy(meeting_header)
+def _insert_delegated_tasks_page(body: etree._Element) -> tuple[etree._Element, etree._Element]:
+    """Create the whole delegated-tasks section from scratch -- spacer
+    paragraph, table-with-header-row-only, and the section's own boundary
+    paragraph (see _delegated_section_boundary_paragraph) -- and splice it
+    in right after page 1's own section ends (_find_page1_section_end),
+    returning the (spacer, table) pair. Only called when no delegated-tasks
+    table currently exists, i.e. the boundary paragraph doesn't exist either
+    (see remove_delegated_tasks_page) -- both are created together here so
+    the section is never left half-present."""
+    anchor = _find_page1_section_end(body).getnext()
     spacer = etree.Element(qn("w:p"))
     table = _build_delegated_table_shell()
-    meeting_header.addprevious(header)
-    meeting_header.addprevious(spacer)
-    meeting_header.addprevious(table)
-    meeting_header.addprevious(_page_break_paragraph())
-    return header, spacer, table
+    boundary = _delegated_section_boundary_paragraph()
+    anchor.addprevious(spacer)
+    anchor.addprevious(table)
+    anchor.addprevious(boundary)
+    return spacer, table
 
 
 def _delegated_body_rpr() -> etree._Element:
-    """Run properties for delegated-row body text, transcribed byte-for-byte
-    from the template's own sample rows (Outfit ExtraLight, template accent
-    color, 10pt) — rows are built programmatically since their count varies
-    per date, so there's no single template row left in the saved doc to
-    clone from once remove_delegated_tasks_page has run."""
+    """Run properties for delegated-row body text (Outfit ExtraLight, 10pt)
+    — rows are built programmatically since their count varies per date, so
+    there's no single template row left in the saved doc to clone from once
+    remove_delegated_tasks_page has run. Colored with the same label_color
+    accent as the row numbers and column headers (TO-DO LIST, Task &
+    cadence/Owner/Status) rather than the template's own sample rows' color
+    (F95738, a leftover from the previous template's palette) -- a
+    deliberate override, not a transcription."""
     rpr = etree.Element(qn("w:rPr"))
     fonts = etree.SubElement(rpr, qn("w:rFonts"))
     fonts.set(qn("w:ascii"), "Outfit ExtraLight")
     fonts.set(qn("w:hAnsi"), "Outfit ExtraLight")
     color = etree.SubElement(rpr, qn("w:color"))
-    color.set(qn("w:val"), "F95738")
+    color.set(qn("w:val"), "BF4E14")
     for tag in ("w:sz", "w:szCs"):
         sz = etree.SubElement(rpr, qn(tag))
         sz.set(qn("w:val"), "20")
@@ -918,14 +932,19 @@ def _delegated_cell(
     return tc
 
 
-def _delegated_row(marked: bool, top_sz: int, bottom_sz: int | None) -> etree._Element:
+def _delegated_row(marked: bool, top_sz: int, bottom_sz: int | None, number: int) -> etree._Element:
     tr = etree.Element(qn("w:tr"))
-    for key in ("task", "owner", "status"):
+    for key in _DELEGATED_COLUMN_ORDER:
         tr.append(
             _delegated_cell(
                 _DELEGATED_COLUMN_WIDTHS[key], top_sz, bottom_sz, marked, center=(key == "owner")
             )
         )
+    number_cell = tr.findall("w:tc", NS)[0]
+    r = etree.SubElement(number_cell.find("w:p", NS), qn("w:r"))
+    r.append(_delegated_header_rpr())
+    t = etree.SubElement(r, qn("w:t"))
+    t.text = str(number)
     return tr
 
 
@@ -977,34 +996,23 @@ def _set_owner_cell(tc: etree._Element, owner: str) -> None:
 
 def _set_status_cell(tc: etree._Element, status: str) -> None:
     lines = [line.strip() for line in status.split("\n") if line.strip()] if status else []
-    if lines:
-        family, size = cell_run_font(tc)
-        bullet_width = text_width_twips(DELEGATED_BULLET_PREFIX, family=family, size_half_points=size)
-        width = cell_text_width_twips(tc) - bullet_width
-        fitted = [
-            fit_single_line(line, family=family, size_half_points=size, max_width_twips=width)
-            for line in lines
-        ]
-        set_cell_text_lines(tc, [f"{DELEGATED_BULLET_PREFIX}{line}" for line in fitted])
-    # A second, near-invisible paragraph whose only job is its own
-    # before-spacing: reserves ~2cm of blank room under the status text for
-    # a handwritten update, without the row growing extra ruled lines.
-    notes_p = etree.SubElement(tc, qn("w:p"))
-    pPr = etree.SubElement(notes_p, qn("w:pPr"))
-    spacing = etree.SubElement(pPr, qn("w:spacing"))
-    spacing.set(qn("w:before"), str(DELEGATED_NOTES_FREE_SPACE_TWIPS))
-    rpr = etree.SubElement(pPr, qn("w:rPr"))
-    sz = etree.SubElement(rpr, qn("w:sz"))
-    sz.set(qn("w:val"), "12")
-    szCs = etree.SubElement(rpr, qn("w:szCs"))
-    szCs.set(qn("w:val"), "12")
+    if not lines:
+        return
+    family, size = cell_run_font(tc)
+    bullet_width = text_width_twips(DELEGATED_BULLET_PREFIX, family=family, size_half_points=size)
+    width = cell_text_width_twips(tc) - bullet_width
+    fitted = [
+        fit_single_line(line, family=family, size_half_points=size, max_width_twips=width)
+        for line in lines
+    ]
+    set_cell_text_lines(tc, [f"{DELEGATED_BULLET_PREFIX}{line}" for line in fitted])
 
 
 def _fill_delegated_row(tr: etree._Element, task: dict) -> None:
     cells = tr.findall("w:tc", NS)
-    _set_task_cadence_cell(cells[0], task["text"], task.get("cadence", "daily"))
-    _set_owner_cell(cells[1], task.get("owner", ""))
-    _set_status_cell(cells[2], task.get("status", ""))
+    _set_task_cadence_cell(cells[1], task["text"], task.get("cadence", "daily"))
+    _set_owner_cell(cells[2], task.get("owner", ""))
+    _set_status_cell(cells[3], task.get("status", ""))
 
 
 def _row_marked(tr: etree._Element) -> bool:
@@ -1035,12 +1043,14 @@ def _paragraph_lines(p: etree._Element) -> list[str]:
 def read_delegated_tasks(body: etree._Element) -> list[dict]:
     """Every delegated task currently on the page(s), in document order,
     parsed back out of the table XML (there is no separate data model — the
-    docx is the only state, per agenda_store's module docstring)."""
+    docx is the only state, per agenda_store's module docstring). The
+    row-number column (cells[0]) is purely positional/derived — it's never
+    read back, only recomputed by rebuild_delegated_tasks."""
     tasks: list[dict] = []
     for table in find_delegated_tables(body):
         for tr in table.findall("w:tr", NS)[1:]:
             cells = tr.findall("w:tc", NS)
-            lines = _paragraph_lines(cells[0].find("w:p", NS))
+            lines = _paragraph_lines(cells[1].find("w:p", NS))
             if not any(lines):
                 continue  # a leftover blank row shouldn't normally exist, but skip rather than crash
             cadence_label = lines[0].strip().lower()
@@ -1052,14 +1062,14 @@ def read_delegated_tasks(body: etree._Element) -> list[dict]:
 
             status_lines = [
                 line[len(DELEGATED_BULLET_PREFIX):] if line.startswith(DELEGATED_BULLET_PREFIX) else line
-                for line in _paragraph_lines(cells[2].find("w:p", NS))
+                for line in _paragraph_lines(cells[3].find("w:p", NS))
                 if line.strip()
             ]
 
             tasks.append(
                 {
                     "text": text,
-                    "owner": cell_text(cells[1]),
+                    "owner": cell_text(cells[2]),
                     "cadence": cadence,
                     "status": "\n".join(status_lines),
                     "marked": _row_marked(tr),
@@ -1080,49 +1090,44 @@ def rebuild_delegated_tasks(body: etree._Element, tasks: list[dict]) -> None:
     tables = find_delegated_tables(body)
 
     if not tasks:
-        for table in tables:
-            header, spacer, table = _delegated_page_unit(table)
-            body.remove(table)
-            body.remove(spacer)
-            body.remove(header)
+        remove_delegated_tasks_page(body)
         return
 
     if tables:
-        first_header, first_spacer, first_table = _delegated_page_unit(tables[0])
-        tail_anchor = tables[-1].getnext()
+        first_spacer, first_table = _delegated_page_unit(tables[0])
         for extra_table in tables[1:]:
-            header, spacer, table = _delegated_page_unit(extra_table)
-            page_break = header.getprevious()
+            spacer, table = _delegated_page_unit(extra_table)
+            page_break = spacer.getprevious()
             body.remove(table)
             body.remove(spacer)
-            body.remove(header)
-            if page_break is not None and page_break.tag == qn("w:p") and any(
-                b.get(qn("w:type")) == "page" for b in page_break.findall(".//w:br", NS)
-            ):
+            if page_break is not None and page_break.tag == qn("w:p") and _has_page_break(page_break):
                 body.remove(page_break)
         for row in first_table.findall("w:tr", NS)[1:]:
             first_table.remove(row)
     else:
-        first_header, first_spacer, first_table = _insert_delegated_tasks_page(body)
-        tail_anchor = first_table.getnext()  # the break paragraph leading into meeting page 1
+        first_spacer, first_table = _insert_delegated_tasks_page(body)
+
+    # Only findable now: _insert_delegated_tasks_page creates the boundary
+    # paragraph together with the rest of the section when neither existed.
+    boundary = _find_delegated_section_boundary(body)
 
     current_table = first_table
     row_on_page = 0
+    row_number = 0
     last_row: etree._Element | None = None
     for task in tasks:
         if row_on_page >= DELEGATED_ROWS_PER_PAGE:
-            new_header = copy.deepcopy(first_header)
             new_spacer = copy.deepcopy(first_spacer)
             new_table = _build_delegated_table_shell()  # header-row-only shell to fill
-            tail_anchor.addprevious(_page_break_paragraph())
-            tail_anchor.addprevious(new_header)
-            tail_anchor.addprevious(new_spacer)
-            tail_anchor.addprevious(new_table)
+            boundary.addprevious(_page_break_paragraph())
+            boundary.addprevious(new_spacer)
+            boundary.addprevious(new_table)
             current_table = new_table
             row_on_page = 0
 
+        row_number += 1
         top_sz = _THICK_BORDER_SZ if row_on_page == 0 else _THIN_BORDER_SZ
-        tr = _delegated_row(bool(task.get("marked")), top_sz, _THIN_BORDER_SZ)
+        tr = _delegated_row(bool(task.get("marked")), top_sz, _THIN_BORDER_SZ, row_number)
         _fill_delegated_row(tr, task)
         current_table.append(tr)
         last_row = tr

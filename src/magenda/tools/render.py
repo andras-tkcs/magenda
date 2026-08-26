@@ -30,7 +30,7 @@ def render_pdf(date: str, include_base64: bool = False, output_dir: str | None =
     d = parse_date(date)
     live_doc = agenda_store.load(d)
     doc = AgendaDocument.from_bytes(live_doc.to_bytes())
-    theme.apply_theme(doc.tree, config.get_active_theme())
+    theme.apply_theme_to_document(doc, config.get_active_theme())
 
     font_setup.ensure_fonts_installed()
     soffice = find_soffice()

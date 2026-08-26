@@ -31,7 +31,7 @@ Tools never generate or rewrite layout — they only inject plain text into
 known slots (a date, a task, a meeting title) or clone a pre-formatted page.
 Fonts are bundled and installed automatically so rendering is identical
 regardless of which machine runs it. The structure is always fixed, but the
-font and 4 accent colors are configurable — see [Look and feel](#look-and-feel).
+font and 5 accent colors are configurable — see [Look and feel](#look-and-feel).
 
 ---
 
@@ -40,11 +40,11 @@ font and 4 accent colors are configurable — see [Look and feel](#look-and-feel
 | Tool | Description |
 |------|-------------|
 | `create_agenda(date, meetings?, daily_schedule?, tasks?, delegated_tasks?, render?, include_base64?, output_dir?)` | Create a fresh agenda for `date` (`YYYY-MM-DD`), always starting from a blank template — an existing agenda for the same date is discarded and replaced. Optional args run the rest of the setup end-to-end in the same call: refresh calendar blocks, add every meeting in `meetings`, fill `daily_schedule`, append `tasks`, populate the delegated-tasks page(s) with `delegated_tasks`, and render to PDF if `render` is true. |
-| `adjust_dates(date)` | Refresh every calendar header/footer block and the "next 4 weeks" grid for an existing agenda. |
-| `add_meeting(date, title)` | Fill the first blank meeting slot, or clone and append a new meeting page (calendar header + title + ruled notes table), always as a single page. A title too long for one line is cut off at the end, never wrapped. |
+| `adjust_dates(date)` | Refresh the calendar header block (in the page header, applies to every page automatically) and the "next 4 weeks" grid for an existing agenda. |
+| `add_meeting(date, title)` | Fill the first blank meeting slot, or clone and append a new meeting page (title + ruled notes table), always as a single page. A title too long for one line is cut off at the end, never wrapped. |
 | `add_daily_schedule(date, entries)` | Fill specific hour slots (`8am`..`6pm`) in the page-1 daily schedule. Each entry: `{hour, text}`. Text that doesn't fit is cut off at the end, never wrapped. |
 | `add_tasks(date, tasks)` | Append tasks to the page-1 to-do list, filling empty rows top-down (18-row capacity). Each task: `{text, due}`. Long task text shrinks down to 9pt before wrapping across multiple lines. |
-| `add_delegated_tasks(date, tasks)` | Add rows to the delegated-tasks page(s), one row per task: `{text, owner?, cadence, marked?, status?}` (`cadence` is `daily`\|`weekly`\|`monthly`; `marked` highlights the row green; `owner` is centered; `status` renders as a bullet list, one bullet per `\n`-separated line). Merges with whatever's already on the page and re-sorts the full set — marked rows first, then unmarked, each group ordered daily → weekly → monthly — spilling onto as many pages as needed with no trailing empty row. The page itself only exists when there's at least one delegated task; `create_agenda` drops it otherwise. |
+| `add_delegated_tasks(date, tasks)` | Add rows to the delegated-tasks page(s), one row per task: `{text, owner?, cadence, marked?, status?}` (`cadence` is `daily`\|`weekly`\|`monthly`; `marked` highlights the row green; `owner` is centered; `status` renders as a bullet list, one bullet per `\n`-separated line). Rows are numbered automatically in display order — not part of the task data. Merges with whatever's already on the page and re-sorts the full set — marked rows first, then unmarked, each group ordered daily → weekly → monthly — spilling onto as many pages as needed with no trailing empty row. The page itself only exists when there's at least one delegated task; `create_agenda` drops it otherwise. Its own page footer ("Notes and updates") has blank ruled lines for handwritten status updates. |
 | `render_pdf(date, include_base64?, output_dir?)` | Render the working docx to PDF via headless LibreOffice. |
 
 Working agendas live only in the server's memory, keyed by date — nothing
@@ -58,15 +58,16 @@ deleted as soon as the call returns, and returns the PDF as base64. Pass
 ## Look and feel
 
 The template's layout is always fixed — pages, tables, column widths never
-change. Its font and 4 accent colors are configurable, though:
+change. Its font and 5 accent colors are configurable, though:
 
 | Setting | Default | What it colors |
 |---|---|---|
 | Font pack | `outfit` | every text run in the template |
 | Weekend color | `EE0000` | Saturday/Sunday weekday-header labels and dates |
-| Date heading color | `0DB04B` | the big day/month/year heading (e.g. "19 TUESDAY") |
-| Section label color | `F95738` | section headers and table column headers (TO-DO LIST, DAILY SCHEDULE, Task/Owner/Status, "Meeting title:") |
-| Notes header color | `FFCB47` | the "Further notes from today" header |
+| Date heading color | `215E99` | the big day/month/year heading (e.g. "19 TUESDAY"), in the page header |
+| Section label color | `BF4E14` | section headers and table column headers (TO-DO LIST, DAILY SCHEDULE, Task & cadence/Owner/Status), the delegated-tasks row numbers, and delegated-tasks body text (task/owner/status) |
+| Accent color | `3A7C22` | "Meeting title:" and the delegated-tasks page's own "Notes and updates" footer heading |
+| Notes header color | `00B0F0` | the "Further notes from today" header |
 
 Colors are hex `RRGGBB`. Font packs are a small **certified** set, not any
 installed font name — a pack has to pass `scripts/certify_font_pack.py`
@@ -98,6 +99,7 @@ on the server's `mcpServers` entry:
         "MAGENDA_WEEKEND_COLOR": "DC2626",
         "MAGENDA_HEADING_COLOR": "7C3AED",
         "MAGENDA_LABEL_COLOR": "1E3A8A",
+        "MAGENDA_ACCENT_COLOR": "047857",
         "MAGENDA_NOTES_COLOR": "0891B2"
       }
     }

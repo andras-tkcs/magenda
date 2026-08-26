@@ -36,8 +36,7 @@ def create_agenda(
     body = doc.body
 
     fields = calendar_math.header_fields(d)
-    for block in xml_ops.find_calendar_blocks(body):
-        xml_ops.apply_calendar_block(block, fields)
+    xml_ops.apply_calendar_block(xml_ops.find_calendar_block(doc.header), fields)
 
     n4w_table = xml_ops.find_next_four_weeks_table(body)
     xml_ops.apply_next_four_weeks(n4w_table, calendar_math.next_four_weeks(d))

@@ -9,7 +9,6 @@ from magenda.xml_ops import MagendaError
 def fresh_doc():
     doc = agenda_store.AgendaDocument.load(agenda_store.TEMPLATE_PATH)
     xml_ops.blank_meeting_title_slot(doc.body)
-    xml_ops.strip_meeting_notes_footer(doc.body)
     xml_ops.ensure_further_notes_page_break(doc.body)
     xml_ops.remove_delegated_tasks_page(doc.body)
     return doc
@@ -21,38 +20,38 @@ def fresh_doc_with_delegated_page():
     for tests that exercise the template's shape directly."""
     doc = agenda_store.AgendaDocument.load(agenda_store.TEMPLATE_PATH)
     xml_ops.blank_meeting_title_slot(doc.body)
-    xml_ops.strip_meeting_notes_footer(doc.body)
     xml_ops.ensure_further_notes_page_break(doc.body)
     return doc
 
 
-def test_find_calendar_blocks_finds_three():
-    # page-1 top, meeting-page top, and the closing page's own header (added
-    # by ensure_further_notes_page_break). The meeting page's notes table
-    # used to ship with a 4th, vestigial embedded calendar footer — see
-    # strip_meeting_notes_footer. fresh_doc also drops the delegated-tasks
-    # page (see remove_delegated_tasks_page) since a fresh agenda has no
-    # delegated tasks yet, which would otherwise add a 4th block here.
+def test_find_calendar_block_locates_the_header_block():
+    # The calendar chrome now lives once in the Word header part (see
+    # xml_ops module docstring) instead of being cloned into the body once
+    # per page -- there's exactly one block, regardless of how many meeting/
+    # delegated-tasks pages the body currently has.
     doc = fresh_doc()
-    blocks = xml_ops.find_calendar_blocks(doc.body)
-    assert len(blocks) == 3
+    block = xml_ops.find_calendar_block(doc.header)
+    assert block.title_row is not None
+    assert block.dayno_row is not None
 
 
-def test_find_calendar_blocks_finds_four_with_delegated_page():
-    doc = fresh_doc_with_delegated_page()
-    blocks = xml_ops.find_calendar_blocks(doc.body)
-    assert len(blocks) == 4
+def test_find_calendar_block_unaffected_by_body_content():
+    with_page = fresh_doc_with_delegated_page()
+    without_page = fresh_doc()
+    # Both resolve fine -- the header is independent of whatever's in the body.
+    xml_ops.find_calendar_block(with_page.header)
+    xml_ops.find_calendar_block(without_page.header)
 
 
 def test_apply_calendar_block_updates_title_and_days():
     doc = fresh_doc()
     fields = calendar_math.header_fields(datetime.date(2026, 12, 25))
-    for block in xml_ops.find_calendar_blocks(doc.body):
-        xml_ops.apply_calendar_block(block, fields)
-        cells = block.title_row.findall("w:tc", xml_ops.NS)
-        assert xml_ops.cell_text(cells[0]) == "25 FRIDAY"
-        assert xml_ops.cell_text(cells[3]) == "DECEMBER"
-        assert xml_ops.cell_text(cells[4]) == "2026"
+    block = xml_ops.find_calendar_block(doc.header)
+    xml_ops.apply_calendar_block(block, fields)
+    cells = block.title_row.findall("w:tc", xml_ops.NS)
+    assert xml_ops.cell_text(cells[0]) == "25 FRIDAY"
+    assert xml_ops.cell_text(cells[3]) == "DECEMBER"
+    assert xml_ops.cell_text(cells[4]) == "2026"
 
 
 def test_append_tasks_fills_top_down_and_enforces_capacity():
@@ -148,7 +147,7 @@ def test_append_tasks_keeps_short_text_on_one_line_at_default_size():
 
 def test_set_meeting_title_truncates_instead_of_wrapping():
     doc = fresh_doc()
-    _, title_para, _ = xml_ops.find_meeting_unit_template(doc.body)
+    title_para, _ = xml_ops.find_meeting_unit_template(doc.body)
     long_title = (
         "It is a test meeting with an extreme super long title to check whether it breaks"
     )
@@ -162,13 +161,13 @@ def test_insert_meeting_page_fills_blank_slot_then_clones():
     doc = fresh_doc()
     body = doc.body
     xml_ops.insert_meeting_page(body, "First meeting")
-    _, title_para, _ = xml_ops.find_meeting_unit_template(body)
+    title_para, _ = xml_ops.find_meeting_unit_template(body)
     assert xml_ops.meeting_title_text(title_para) == "First meeting"
 
     before = len(body.findall(".//w:tbl", xml_ops.NS))
     xml_ops.insert_meeting_page(body, "Second meeting")
     after = len(body.findall(".//w:tbl", xml_ops.NS))
-    assert after == before + 2  # new header table + new notes table
+    assert after == before + 1  # new notes table only -- no per-page calendar header to clone
 
     titles = [
         xml_ops._paragraph_text(p)[len(xml_ops.MEETING_TITLE_PREFIX):]
@@ -179,16 +178,14 @@ def test_insert_meeting_page_fills_blank_slot_then_clones():
 
 
 def test_insert_meeting_page_keeps_closing_page_last():
-    """Regression test: the closing page's header+page-break (added once by
-    ensure_further_notes_page_break) must stay the LAST thing before
-    'Further notes', not get sandwiched between meetings added afterward."""
+    """Regression test: meetings added after create_agenda's initial setup
+    must stay ordered before the closing 'Further notes' page, never after
+    it."""
     doc = fresh_doc()
     body = doc.body
     xml_ops.insert_meeting_page(body, "First meeting")
     xml_ops.insert_meeting_page(body, "Second meeting")
     xml_ops.insert_meeting_page(body, "Third meeting")
-
-    from lxml import etree
 
     children = list(body)
     meeting_title_indices = [
@@ -202,15 +199,11 @@ def test_insert_meeting_page_keeps_closing_page_last():
     assert len(meeting_title_indices) == 3
     assert all(i < further_notes_index for i in meeting_title_indices)
 
-    # exactly one calendar header directly precedes "Further notes" (no duplicate stacked headers)
-    header = children[further_notes_index - 1]
-    assert xml_ops._is_calendar_header_table(header)
-    before_header = children[further_notes_index - 2]
-    assert before_header.tag == xml_ops.qn("w:p")
-    assert any(
-        b.get("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}type") == "page"
-        for b in before_header.findall(".//w:br", xml_ops.NS)
-    )
+    # A page break (not a stacked calendar header -- that's gone, see the
+    # module docstring) directly precedes "Further notes".
+    before = children[further_notes_index - 1]
+    assert before.tag == xml_ops.qn("w:p")
+    assert xml_ops._has_page_break(before)
 
 
 def test_no_adjacent_tables_between_meetings():
@@ -232,15 +225,14 @@ def test_no_adjacent_tables_between_meetings():
 def test_save_and_reload_roundtrips_valid_xml(tmp_path):
     doc = fresh_doc()
     fields = calendar_math.header_fields(datetime.date(2026, 3, 1))
-    for block in xml_ops.find_calendar_blocks(doc.body):
-        xml_ops.apply_calendar_block(block, fields)
+    xml_ops.apply_calendar_block(xml_ops.find_calendar_block(doc.header), fields)
     xml_ops.insert_meeting_page(doc.body, "Roundtrip check")
 
     out = tmp_path / "roundtrip.docx"
     doc.save(out)
 
     reloaded = agenda_store.AgendaDocument.load(out)
-    _, title_para, _ = xml_ops.find_meeting_unit_template(reloaded.body)
+    title_para, _ = xml_ops.find_meeting_unit_template(reloaded.body)
     assert xml_ops.meeting_title_text(title_para) == "Roundtrip check"
 
 
@@ -273,6 +265,18 @@ def test_rebuild_delegated_tasks_removes_page_when_emptied():
     assert xml_ops.find_delegated_tables(doc.body) == []
 
 
+def test_rebuild_delegated_tasks_leaves_no_dangling_section_boundary():
+    """Regression test: the delegated-tasks page lives in its own OOXML
+    section (so word/footer1.xml applies only there) -- if its boundary
+    paragraph were ever left behind after emptying the list, that section
+    would still consume a blank page of its own even with no table in it."""
+    doc = fresh_doc()
+    xml_ops.rebuild_delegated_tasks(doc.body, [_task("Renew the domain")])
+    xml_ops.rebuild_delegated_tasks(doc.body, [])
+    with pytest.raises(MagendaError):
+        xml_ops._find_delegated_section_boundary(doc.body)
+
+
 def test_rebuild_delegated_tasks_no_trailing_empty_rows():
     doc = fresh_doc()
     xml_ops.rebuild_delegated_tasks(doc.body, [_task("A"), _task("B"), _task("C")])
@@ -298,11 +302,36 @@ def test_read_delegated_tasks_roundtrips_fields():
     assert by_text["Water the plants"]["marked"] is False
 
 
+def test_delegated_tasks_rows_are_numbered_in_order():
+    doc = fresh_doc()
+    xml_ops.rebuild_delegated_tasks(doc.body, [_task("A"), _task("B"), _task("C")])
+    table = xml_ops.find_delegated_tables(doc.body)[0]
+    rows = table.findall("w:tr", xml_ops.NS)[1:]
+    numbers = [xml_ops.cell_text(row.findall("w:tc", xml_ops.NS)[0]) for row in rows]
+    assert numbers == ["1", "2", "3"]
+
+
+def test_delegated_body_text_matches_row_number_and_header_color():
+    doc = fresh_doc()
+    xml_ops.rebuild_delegated_tasks(
+        doc.body, [_task("A", owner="Andrea", status="Doing fine")]
+    )
+    table = xml_ops.find_delegated_tables(doc.body)[0]
+    header_color = table.findall("w:tr", xml_ops.NS)[0].findall("w:tc", xml_ops.NS)[1].find(
+        "w:p/w:r/w:rPr/w:color", xml_ops.NS
+    ).get(xml_ops.qn("w:val"))
+    data_row = table.findall("w:tr", xml_ops.NS)[1]
+    cells = data_row.findall("w:tc", xml_ops.NS)
+    for cell in cells:  # number, task/cadence, owner, status
+        for color in cell.findall(".//w:color", xml_ops.NS):
+            assert color.get(xml_ops.qn("w:val")) == header_color
+
+
 def test_owner_column_centered():
     doc = fresh_doc()
     xml_ops.rebuild_delegated_tasks(doc.body, [_task("A", owner="Andrea")])
     table = xml_ops.find_delegated_tables(doc.body)[0]
-    owner_cell = table.findall("w:tr", xml_ops.NS)[1].findall("w:tc", xml_ops.NS)[1]
+    owner_cell = table.findall("w:tr", xml_ops.NS)[1].findall("w:tc", xml_ops.NS)[2]
     jc = owner_cell.find("w:p/w:pPr/w:jc", xml_ops.NS)
     assert jc is not None and jc.get(xml_ops.qn("w:val")) == "center"
 
@@ -313,7 +342,7 @@ def test_status_multiline_becomes_one_bullet_per_line_and_roundtrips():
         doc.body, [_task("A", status="Draft sent\nWaiting on finance\nDue Friday")]
     )
     table = xml_ops.find_delegated_tables(doc.body)[0]
-    status_cell = table.findall("w:tr", xml_ops.NS)[1].findall("w:tc", xml_ops.NS)[2]
+    status_cell = table.findall("w:tr", xml_ops.NS)[1].findall("w:tc", xml_ops.NS)[3]
     lines = xml_ops._paragraph_lines(status_cell.find("w:p", xml_ops.NS))
     assert lines == [
         f"{xml_ops.DELEGATED_BULLET_PREFIX}Draft sent",

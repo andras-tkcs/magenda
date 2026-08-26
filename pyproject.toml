@@ -1,6 +1,6 @@
 [project]
 name = "magenda"
-version = "0.4.0"
+version = "0.5.0"
 description = "MCP server that generates a deterministic, pixel-identical daily agenda PDF from a fixed docx template."
 license = "Apache-2.0"
 requires-python = ">=3.11"

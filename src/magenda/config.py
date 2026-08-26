@@ -39,6 +39,7 @@ def _theme_from_env() -> Theme:
         weekend_color=_valid_color(os.environ.get("MAGENDA_WEEKEND_COLOR"), _DEFAULTS.weekend_color),
         heading_color=_valid_color(os.environ.get("MAGENDA_HEADING_COLOR"), _DEFAULTS.heading_color),
         label_color=_valid_color(os.environ.get("MAGENDA_LABEL_COLOR"), _DEFAULTS.label_color),
+        accent_color=_valid_color(os.environ.get("MAGENDA_ACCENT_COLOR"), _DEFAULTS.accent_color),
         notes_color=_valid_color(os.environ.get("MAGENDA_NOTES_COLOR"), _DEFAULTS.notes_color),
     )
 

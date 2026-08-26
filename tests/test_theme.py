@@ -25,18 +25,29 @@ def _color_values(tree) -> set[str]:
     return values
 
 
+def _color_values_across(trees) -> set[str]:
+    values: set[str] = set()
+    for tree in trees:
+        values |= _color_values(tree)
+    return values
+
+
+def fresh_doc():
+    return agenda_store.AgendaDocument.load(agenda_store.TEMPLATE_PATH)
+
+
 def fresh_tree():
-    doc = agenda_store.AgendaDocument.load(agenda_store.TEMPLATE_PATH)
-    return doc.tree
+    return fresh_doc().tree
 
 
 def test_theme_defaults_match_template():
     t = Theme()
     assert t.font_pack == "outfit"
     assert t.weekend_color == "EE0000"
-    assert t.heading_color == "0DB04B"
-    assert t.label_color == "F95738"
-    assert t.notes_color == "FFCB47"
+    assert t.heading_color == "215E99"
+    assert t.label_color == "BF4E14"
+    assert t.accent_color == "3A7C22"
+    assert t.notes_color == "00B0F0"
 
 
 def test_apply_font_pack_swaps_all_five_outfit_weights():
@@ -81,27 +92,34 @@ def test_apply_font_pack_size_scale_shrinks_only_swapped_runs():
     assert sizes_after != sizes_before
 
 
-def test_apply_colors_swaps_all_four_known_accents():
+def test_apply_colors_swaps_the_known_accents_present_in_one_part():
+    # document.xml's own body carries 4 of the 5 known accents (weekend,
+    # label, accent, notes) -- the heading color lives only in the Word
+    # header part (word/header1.xml), which apply_colors doesn't reach on
+    # its own; see test_apply_theme_to_document_covers_every_part below for
+    # the header/footer parts too.
     tree = fresh_tree()
     before = _color_values(tree)
-    assert {"EE0000", "0DB04B", "F95738", "FFCB47"} <= before
+    assert {"EE0000", "BF4E14", "3A7C22", "00B0F0"} <= before
 
-    custom = Theme(weekend_color="111111", heading_color="222222", label_color="333333", notes_color="444444")
+    custom = Theme(weekend_color="111111", heading_color="222222", label_color="333333", accent_color="444444", notes_color="555555")
     theme.apply_colors(tree, custom)
     after = _color_values(tree)
 
-    assert not ({"EE0000", "0DB04B", "F95738", "FFCB47"} & after)
-    assert {"111111", "222222", "333333", "444444"} <= after
+    assert not ({"EE0000", "BF4E14", "3A7C22", "00B0F0"} & after)
+    assert {"111111", "333333", "444444", "555555"} <= after
 
 
 def test_apply_colors_leaves_unrelated_colors_untouched():
-    # styles.xml-level colors aren't reachable from document.xml's tree at
-    # all; within document.xml itself, any w:color that isn't one of the 4
-    # known constants must survive unchanged. There are none in the vanilla
-    # template's document.xml body, so this just documents that a no-op
-    # theme changes nothing.
+    # Any w:color that isn't one of the 5 known constants must survive
+    # unchanged. F95738 is one such leftover: the template's own shipped
+    # sample delegated-tasks rows (dropped by create_agenda, never part of
+    # a rebuilt page -- see xml_ops._delegated_body_rpr, which colors
+    # *generated* rows with label_color instead) bake it into their
+    # paragraph-mark formatting, and it isn't one of the 5 themed roles.
     tree = fresh_tree()
     before = _color_values(tree)
+    assert "F95738" in before
     theme.apply_colors(tree, Theme())  # defaults == template's own values
     after = _color_values(tree)
     assert before == after
@@ -113,6 +131,27 @@ def test_apply_theme_is_font_and_color_together():
     theme.apply_theme(tree, custom)
     assert "Roboto Black" in _rfonts_ascii_values(tree)
     assert "ABCDEF" in _color_values(tree)
+
+
+def test_apply_theme_to_document_covers_every_part():
+    """The calendar heading color lives only in the header part, and the
+    "Notes and updates" footer heading only in footer1.xml -- a themed
+    render has to reach all of them, not just document.xml's body."""
+    doc = fresh_doc()
+    all_before = _color_values_across(doc.themable_trees())
+    assert {"EE0000", "215E99", "BF4E14", "3A7C22", "00B0F0"} <= all_before
+
+    custom = Theme(
+        weekend_color="111111",
+        heading_color="222222",
+        label_color="333333",
+        accent_color="444444",
+        notes_color="555555",
+    )
+    theme.apply_theme_to_document(doc, custom)
+    all_after = _color_values_across(doc.themable_trees())
+    assert not ({"EE0000", "215E99", "BF4E14", "3A7C22", "00B0F0"} & all_after)
+    assert {"111111", "222222", "333333", "444444", "555555"} <= all_after
 
 
 # -- config.py -------------------------------------------------------------
@@ -138,7 +177,7 @@ def test_theme_from_env(monkeypatch):
     t = config._theme_from_env()
     assert t.font_pack == "jetbrains_mono"
     assert t.label_color == "ABCDEF"
-    assert t.heading_color == "0DB04B"  # unset -> template default
+    assert t.heading_color == "215E99"  # unset -> template default
 
 
 def test_theme_from_env_invalid_values_fall_back(monkeypatch):
@@ -182,9 +221,9 @@ def test_render_pdf_applies_active_theme(tmp_path, monkeypatch):
 
 @_needs_soffice
 def test_render_pdf_never_mutates_shared_working_doc(tmp_path, monkeypatch):
-    """theme.apply_theme must run on a clone -- a themed render must not
-    leave the in-memory working document (which every later tool call reads)
-    with renamed fonts."""
+    """theme.apply_theme_to_document must run on a clone -- a themed render
+    must not leave the in-memory working document (which every later tool
+    call reads) with renamed fonts."""
     from magenda import tools
 
     monkeypatch.setattr(config, "get_active_theme", lambda: Theme(font_pack="roboto"))

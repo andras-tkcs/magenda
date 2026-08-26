@@ -39,27 +39,33 @@ _OUTFIT_WEIGHTS = FONT_PACKS["outfit"]["weights"]
 # The template's own baked-in accent colors (see assets/template.docx),
 # keyed by the structural role they play there:
 #   weekend  — Saturday/Sunday weekday-header labels and date numbers
-#   heading  — the big day/month/year heading ("19 TUESDAY", "MAY 2026")
-#   label    — section headers and column headers (TO-DO LIST, DAILY
-#              SCHEDULE, Task/Owner/Status, "Meeting title:")
-#   notes    — the "Further notes from today" header
+#   heading  — the big day/month/year heading ("19 TUESDAY", "MAY 2026"),
+#              now in the document's Word header part
+#   label    — section headers and table column headers (TO-DO LIST, DAILY
+#              SCHEDULE, Task & cadence/Owner/Status), the delegated-tasks
+#              row numbers, and delegated-tasks body text (task/owner/status)
+#   accent   — "Meeting title:" and the delegated-tasks page's own
+#              "Notes and updates" footer heading
+#   notes    — the closing "Further notes from today" header
 _ORIGINAL_COLORS = {
     "weekend_color": "EE0000",
-    "heading_color": "0DB04B",
-    "label_color": "F95738",
-    "notes_color": "FFCB47",
+    "heading_color": "215E99",
+    "label_color": "BF4E14",
+    "accent_color": "3A7C22",
+    "notes_color": "00B0F0",
 }
 
 
 @dataclass(frozen=True)
 class Theme:
-    """A font pack + 4 accent colors. Defaults are the template's own
+    """A font pack + 5 accent colors. Defaults are the template's own
     values, so Theme() round-trips to a no-op when applied."""
 
     font_pack: str = "outfit"
     weekend_color: str = _ORIGINAL_COLORS["weekend_color"]
     heading_color: str = _ORIGINAL_COLORS["heading_color"]
     label_color: str = _ORIGINAL_COLORS["label_color"]
+    accent_color: str = _ORIGINAL_COLORS["accent_color"]
     notes_color: str = _ORIGINAL_COLORS["notes_color"]
 
 
@@ -134,6 +140,15 @@ def apply_theme(tree: etree._ElementTree, theme: Theme) -> None:
     apply_colors(tree, theme)
 
 
+def apply_theme_to_document(doc: AgendaDocument, theme: Theme) -> None:
+    """Apply `theme` across every themable XML part of `doc` — not just
+    document.xml's body content, but also the header/footer parts the
+    calendar chrome and the delegated-tasks page's "Notes and updates"
+    heading now live in (see AgendaDocument.themable_trees)."""
+    for tree in doc.themable_trees():
+        apply_theme(tree, theme)
+
+
 def render_pdf_with_theme(date: str, theme: Theme, output_dir: str) -> Path:
     """Render the working docx for `date` to PDF using `theme`, writing the
     PDF into `output_dir` as `<date>-<font_pack>.pdf`. Operates on an
@@ -142,7 +157,7 @@ def render_pdf_with_theme(date: str, theme: Theme, output_dir: str) -> Path:
     d = _parse_date(date)
     live_doc = agenda_store.load(d)
     doc = AgendaDocument.from_bytes(live_doc.to_bytes())
-    apply_theme(doc.tree, theme)
+    apply_theme_to_document(doc, theme)
 
     font_setup.ensure_fonts_installed()
     soffice = find_soffice()
