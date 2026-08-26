@@ -475,6 +475,24 @@ def _paragraph_text(p: etree._Element) -> str:
     return "".join(t.text or "" for t in p.findall(".//w:t", NS))
 
 
+def find_all_meeting_units(body: etree._Element) -> list[tuple[etree._Element, etree._Element]]:
+    """Every meeting page's (title_paragraph, notes_table) pair, in document
+    order — including a still-blank first slot. Each meeting occupies
+    exactly one PDF page (see tests.test_meetings_render_one_page_each), so
+    this list's order is also final PDF page order among the meeting pages."""
+    units = []
+    children = list(body)
+    for i, el in enumerate(children):
+        if el.tag == qn("w:p") and _paragraph_text(el).startswith(MEETING_TITLE_PREFIX):
+            notes_table = children[i + 1]
+            if notes_table.tag != qn("w:tbl"):
+                raise MagendaError("meeting page template has an unexpected shape")
+            units.append((el, notes_table))
+    if not units:
+        raise MagendaError("could not locate a meeting page template in this agenda")
+    return units
+
+
 def find_meeting_unit_template(body: etree._Element) -> tuple[etree._Element, etree._Element]:
     """Return (title_paragraph, notes_table) for the first meeting page in
     the document — used both as the clone source and, when its title is
@@ -482,14 +500,7 @@ def find_meeting_unit_template(body: etree._Element) -> tuple[etree._Element, et
     header isn't part of this unit — it lives in the Word header part (see
     find_calendar_block) and repeats on every page on its own, so there's
     nothing to clone for it here."""
-    children = list(body)
-    for i, el in enumerate(children):
-        if el.tag == qn("w:p") and _paragraph_text(el).startswith(MEETING_TITLE_PREFIX):
-            notes_table = children[i + 1]
-            if notes_table.tag != qn("w:tbl"):
-                raise MagendaError("meeting page template has an unexpected shape")
-            return el, notes_table
-    raise MagendaError("could not locate a meeting page template in this agenda")
+    return find_all_meeting_units(body)[0]
 
 
 def meeting_title_text(title_para: etree._Element) -> str:
@@ -610,6 +621,65 @@ def insert_meeting_page(body: etree._Element, title: str) -> None:
     anchor.addprevious(_page_break_paragraph())
     anchor.addprevious(new_title_para)
     anchor.addprevious(new_notes)
+
+
+# --------------------------------------------------------------------------
+# PDF navigation links (see magenda.pdf_links, which does the actual
+# PDF-side linking — everything here is document-structure bookkeeping:
+# which schedule text pairs with which meeting, and which final PDF page a
+# meeting/the closing page lands on.)
+# --------------------------------------------------------------------------
+
+# The Word header's own "<< Overview" / "Notes >>" labels (see
+# assets/template.docx, word/header1.xml, next to the week calendar) — used
+# as PDF link-source text, since the header (and so these labels) repeats
+# identically on every page.
+OVERVIEW_LINK_LABEL = "<< Overview"
+NOTES_LINK_LABEL = "Notes >>"
+
+
+def read_daily_schedule_entries(body: etree._Element) -> list[str]:
+    """Text of every currently-filled daily-schedule slot (page 1, right
+    column), in row order."""
+    table = find_schedule_table(body)
+    texts = []
+    for row in table.findall("w:tr", NS):
+        notes_cell = row.findall("w:tc", NS)[1]
+        text = cell_text(notes_cell)
+        if text:
+            texts.append(text)
+    return texts
+
+
+def match_schedule_to_meetings(body: etree._Element) -> list[tuple[str, int]]:
+    """Pair each filled daily-schedule slot with the (0-indexed, document
+    order) meeting it names, by prefix match: both a schedule entry's text
+    and a meeting's title are independently truncated from the end (no
+    ellipsis — see text_fit.fit_single_line) from whatever the caller
+    typed, so for a schedule entry and a meeting that came from the same
+    title, one is always a textual prefix of the other. A schedule entry
+    with no matching meeting (it isn't one), or with more than one
+    equally-plausible match, is left out rather than guessing."""
+    titles = [meeting_title_text(title_para) for title_para, _ in find_all_meeting_units(body)]
+    pairs = []
+    for text in read_daily_schedule_entries(body):
+        matches = [
+            i for i, title in enumerate(titles)
+            if title and (text.startswith(title) or title.startswith(text))
+        ]
+        if len(matches) == 1:
+            pairs.append((text, matches[0]))
+    return pairs
+
+
+def meeting_page_index(body: etree._Element, meeting_index: int) -> int:
+    """0-indexed final-PDF page number of the (0-indexed, document-order)
+    meeting `meeting_index`, computed purely from document structure: page 0
+    is the overview, followed by one page per delegated-tasks table
+    currently in the doc (find_delegated_tables returns exactly one <w:tbl>
+    per page — see rebuild_delegated_tasks), then one page per meeting in
+    order."""
+    return 1 + len(find_delegated_tables(body)) + meeting_index
 
 
 # --------------------------------------------------------------------------

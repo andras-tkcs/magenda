@@ -1,6 +1,6 @@
 [project]
 name = "magenda"
-version = "0.5.0"
+version = "0.5.1"
 description = "MCP server that generates a deterministic, pixel-identical daily agenda PDF from a fixed docx template."
 license = "Apache-2.0"
 requires-python = ">=3.11"
@@ -8,6 +8,7 @@ dependencies = [
     "mcp>=1.0.0,<2.0.0",
     "lxml>=5.0.0",
     "Pillow>=10.0.0",
+    "pymupdf>=1.24.0",
 ]
 
 [project.scripts]
@@ -17,7 +18,6 @@ magenda = "magenda.server:main"
 dev = [
     "pytest>=8.0.0",
     "fonttools>=4.50.0",
-    "pymupdf>=1.24.0",
     "pyinstaller>=6.0",
 ]
 
