@@ -38,11 +38,12 @@ rendering is identical regardless of which machine runs it.
 
 | Tool | Description |
 |------|-------------|
-| `create_agenda(date, meetings?, daily_schedule?, tasks?, render?, include_base64?, output_dir?)` | Create a fresh agenda for `date` (`YYYY-MM-DD`), always starting from a blank template — an existing agenda for the same date is discarded and replaced. Optional args run the rest of the setup end-to-end in the same call: refresh calendar blocks, add every meeting in `meetings`, fill `daily_schedule`, append `tasks`, and render to PDF if `render` is true. |
+| `create_agenda(date, meetings?, daily_schedule?, tasks?, delegated_tasks?, render?, include_base64?, output_dir?)` | Create a fresh agenda for `date` (`YYYY-MM-DD`), always starting from a blank template — an existing agenda for the same date is discarded and replaced. Optional args run the rest of the setup end-to-end in the same call: refresh calendar blocks, add every meeting in `meetings`, fill `daily_schedule`, append `tasks`, populate the delegated-tasks page(s) with `delegated_tasks`, and render to PDF if `render` is true. |
 | `adjust_dates(date)` | Refresh every calendar header/footer block and the "next 4 weeks" grid for an existing agenda. |
 | `add_meeting(date, title)` | Fill the first blank meeting slot, or clone and append a new meeting page (calendar header + title + ruled notes table), always as a single page. A title too long for one line is cut off at the end, never wrapped. |
 | `add_daily_schedule(date, entries)` | Fill specific hour slots (`8am`..`6pm`) in the page-1 daily schedule. Each entry: `{hour, text}`. Text that doesn't fit is cut off at the end, never wrapped. |
 | `add_tasks(date, tasks)` | Append tasks to the page-1 to-do list, filling empty rows top-down (18-row capacity). Each task: `{text, due}`. Long task text shrinks down to 9pt before wrapping across multiple lines. |
+| `add_delegated_tasks(date, tasks)` | Add rows to the delegated-tasks page(s), one row per task: `{text, owner?, cadence, marked?, status?}` (`cadence` is `daily`\|`weekly`\|`monthly`; `marked` highlights the row green; `owner` is centered; `status` renders as a bullet list, one bullet per `\n`-separated line). Merges with whatever's already on the page and re-sorts the full set — marked rows first, then unmarked, each group ordered daily → weekly → monthly — spilling onto as many pages as needed with no trailing empty row. The page itself only exists when there's at least one delegated task; `create_agenda` drops it otherwise. |
 | `render_pdf(date, include_base64?, output_dir?)` | Render the working docx to PDF via headless LibreOffice. |
 
 Working agendas live only in the server's memory, keyed by date — nothing

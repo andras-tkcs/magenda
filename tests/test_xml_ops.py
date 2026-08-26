@@ -11,6 +11,18 @@ def fresh_doc():
     xml_ops.blank_meeting_title_slot(doc.body)
     xml_ops.strip_meeting_notes_footer(doc.body)
     xml_ops.ensure_further_notes_page_break(doc.body)
+    xml_ops.remove_delegated_tasks_page(doc.body)
+    return doc
+
+
+def fresh_doc_with_delegated_page():
+    """Like fresh_doc, but keeps the template's own delegated-tasks page
+    (still carrying its 4 illustrative sample rows) instead of dropping it —
+    for tests that exercise the template's shape directly."""
+    doc = agenda_store.AgendaDocument.load(agenda_store.TEMPLATE_PATH)
+    xml_ops.blank_meeting_title_slot(doc.body)
+    xml_ops.strip_meeting_notes_footer(doc.body)
+    xml_ops.ensure_further_notes_page_break(doc.body)
     return doc
 
 
@@ -18,10 +30,18 @@ def test_find_calendar_blocks_finds_three():
     # page-1 top, meeting-page top, and the closing page's own header (added
     # by ensure_further_notes_page_break). The meeting page's notes table
     # used to ship with a 4th, vestigial embedded calendar footer — see
-    # strip_meeting_notes_footer.
+    # strip_meeting_notes_footer. fresh_doc also drops the delegated-tasks
+    # page (see remove_delegated_tasks_page) since a fresh agenda has no
+    # delegated tasks yet, which would otherwise add a 4th block here.
     doc = fresh_doc()
     blocks = xml_ops.find_calendar_blocks(doc.body)
     assert len(blocks) == 3
+
+
+def test_find_calendar_blocks_finds_four_with_delegated_page():
+    doc = fresh_doc_with_delegated_page()
+    blocks = xml_ops.find_calendar_blocks(doc.body)
+    assert len(blocks) == 4
 
 
 def test_apply_calendar_block_updates_title_and_days():
@@ -222,3 +242,152 @@ def test_save_and_reload_roundtrips_valid_xml(tmp_path):
     reloaded = agenda_store.AgendaDocument.load(out)
     _, title_para, _ = xml_ops.find_meeting_unit_template(reloaded.body)
     assert xml_ops.meeting_title_text(title_para) == "Roundtrip check"
+
+
+def _task(text, cadence="daily", owner="", marked=False, status=""):
+    return {"text": text, "cadence": cadence, "owner": owner, "marked": marked, "status": status}
+
+
+def test_rebuild_delegated_tasks_noop_when_absent_and_empty():
+    doc = fresh_doc()  # delegated page already dropped
+    assert xml_ops.find_delegated_tables(doc.body) == []
+    xml_ops.rebuild_delegated_tasks(doc.body, [])
+    assert xml_ops.find_delegated_tables(doc.body) == []
+
+
+def test_rebuild_delegated_tasks_creates_page_when_absent():
+    doc = fresh_doc()
+    assert xml_ops.find_delegated_tables(doc.body) == []
+    xml_ops.rebuild_delegated_tasks(doc.body, [_task("Renew the domain")])
+    tables = xml_ops.find_delegated_tables(doc.body)
+    assert len(tables) == 1
+    rows = tables[0].findall("w:tr", xml_ops.NS)
+    assert len(rows) == 2  # header + 1 data row
+
+
+def test_rebuild_delegated_tasks_removes_page_when_emptied():
+    doc = fresh_doc()
+    xml_ops.rebuild_delegated_tasks(doc.body, [_task("Renew the domain")])
+    assert xml_ops.find_delegated_tables(doc.body) != []
+    xml_ops.rebuild_delegated_tasks(doc.body, [])
+    assert xml_ops.find_delegated_tables(doc.body) == []
+
+
+def test_rebuild_delegated_tasks_no_trailing_empty_rows():
+    doc = fresh_doc()
+    xml_ops.rebuild_delegated_tasks(doc.body, [_task("A"), _task("B"), _task("C")])
+    table = xml_ops.find_delegated_tables(doc.body)[0]
+    assert len(table.findall("w:tr", xml_ops.NS)) == 4  # header + exactly 3
+
+
+def test_read_delegated_tasks_roundtrips_fields():
+    doc = fresh_doc()
+    tasks = [
+        _task("Ship the report", cadence="weekly", owner="Andrea", marked=True, status="In progress"),
+        _task("Water the plants", cadence="daily", owner="Taki"),
+    ]
+    xml_ops.rebuild_delegated_tasks(doc.body, tasks)
+    readback = xml_ops.read_delegated_tasks(doc.body)
+    assert len(readback) == 2
+    by_text = {t["text"]: t for t in readback}
+    assert by_text["Ship the report"]["cadence"] == "weekly"
+    assert by_text["Ship the report"]["owner"] == "Andrea"
+    assert by_text["Ship the report"]["marked"] is True
+    assert by_text["Ship the report"]["status"] == "In progress"
+    assert by_text["Water the plants"]["cadence"] == "daily"
+    assert by_text["Water the plants"]["marked"] is False
+
+
+def test_owner_column_centered():
+    doc = fresh_doc()
+    xml_ops.rebuild_delegated_tasks(doc.body, [_task("A", owner="Andrea")])
+    table = xml_ops.find_delegated_tables(doc.body)[0]
+    owner_cell = table.findall("w:tr", xml_ops.NS)[1].findall("w:tc", xml_ops.NS)[1]
+    jc = owner_cell.find("w:p/w:pPr/w:jc", xml_ops.NS)
+    assert jc is not None and jc.get(xml_ops.qn("w:val")) == "center"
+
+
+def test_status_multiline_becomes_one_bullet_per_line_and_roundtrips():
+    doc = fresh_doc()
+    xml_ops.rebuild_delegated_tasks(
+        doc.body, [_task("A", status="Draft sent\nWaiting on finance\nDue Friday")]
+    )
+    table = xml_ops.find_delegated_tables(doc.body)[0]
+    status_cell = table.findall("w:tr", xml_ops.NS)[1].findall("w:tc", xml_ops.NS)[2]
+    lines = xml_ops._paragraph_lines(status_cell.find("w:p", xml_ops.NS))
+    assert lines == [
+        f"{xml_ops.DELEGATED_BULLET_PREFIX}Draft sent",
+        f"{xml_ops.DELEGATED_BULLET_PREFIX}Waiting on finance",
+        f"{xml_ops.DELEGATED_BULLET_PREFIX}Due Friday",
+    ]
+
+    readback = xml_ops.read_delegated_tasks(doc.body)
+    assert readback[0]["status"] == "Draft sent\nWaiting on finance\nDue Friday"
+
+
+def test_delegated_tasks_marked_rows_shaded_unmarked_not():
+    doc = fresh_doc()
+    xml_ops.rebuild_delegated_tasks(doc.body, [_task("Marked", marked=True), _task("Plain", marked=False)])
+    table = xml_ops.find_delegated_tables(doc.body)[0]
+    rows = table.findall("w:tr", xml_ops.NS)[1:]
+    marked_row, plain_row = rows
+    assert xml_ops._row_marked(marked_row) is True
+    assert xml_ops._row_marked(plain_row) is False
+
+
+def test_rebuild_delegated_tasks_orders_marked_first_then_cadence():
+    doc = fresh_doc()
+    tasks = [
+        _task("unmarked monthly", cadence="monthly"),
+        _task("marked weekly", cadence="weekly", marked=True),
+        _task("unmarked daily", cadence="daily"),
+        _task("marked daily", cadence="daily", marked=True),
+        _task("marked monthly", cadence="monthly", marked=True),
+        _task("unmarked weekly", cadence="weekly"),
+    ]
+    xml_ops.rebuild_delegated_tasks(doc.body, sorted(
+        tasks, key=lambda t: (0 if t["marked"] else 1, xml_ops.DELEGATED_CADENCE_ORDER[t["cadence"]])
+    ))
+    readback = xml_ops.read_delegated_tasks(doc.body)
+    assert [t["text"] for t in readback] == [
+        "marked daily",
+        "marked weekly",
+        "marked monthly",
+        "unmarked daily",
+        "unmarked weekly",
+        "unmarked monthly",
+    ]
+
+
+def test_rebuild_delegated_tasks_spans_multiple_pages():
+    doc = fresh_doc()
+    n = xml_ops.DELEGATED_ROWS_PER_PAGE + 3
+    xml_ops.rebuild_delegated_tasks(doc.body, [_task(f"task {i}") for i in range(n)])
+    tables = xml_ops.find_delegated_tables(doc.body)
+    assert len(tables) == 2
+    assert len(tables[0].findall("w:tr", xml_ops.NS)) == 1 + xml_ops.DELEGATED_ROWS_PER_PAGE
+    assert len(tables[1].findall("w:tr", xml_ops.NS)) == 1 + 3  # no trailing empty rows
+    assert xml_ops.read_delegated_tasks(doc.body) and len(xml_ops.read_delegated_tasks(doc.body)) == n
+
+
+def test_rebuild_delegated_tasks_shrinks_pages_back_down():
+    doc = fresh_doc()
+    n = xml_ops.DELEGATED_ROWS_PER_PAGE + 3
+    xml_ops.rebuild_delegated_tasks(doc.body, [_task(f"task {i}") for i in range(n)])
+    assert len(xml_ops.find_delegated_tables(doc.body)) == 2
+
+    xml_ops.rebuild_delegated_tasks(doc.body, [_task("only one")])
+    tables = xml_ops.find_delegated_tables(doc.body)
+    assert len(tables) == 1
+    assert len(tables[0].findall("w:tr", xml_ops.NS)) == 2
+
+
+def test_no_adjacent_tables_around_delegated_page():
+    doc = fresh_doc()
+    xml_ops.rebuild_delegated_tasks(doc.body, [_task("A")])
+    xml_ops.insert_meeting_page(doc.body, "A meeting")
+
+    children = list(doc.body)
+    for prev, cur in zip(children, children[1:]):
+        if prev.tag == xml_ops.qn("w:tbl") and cur.tag == xml_ops.qn("w:tbl"):
+            pytest.fail("found two adjacent <w:tbl> elements with no separating paragraph")

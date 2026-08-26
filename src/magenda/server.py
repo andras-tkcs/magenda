@@ -52,6 +52,17 @@ def create_agenda(
         list[dict] | None,
         Field(description="List of {text, due} to append to the page-1 to-do list."),
     ] = None,
+    delegated_tasks: Annotated[
+        list[dict] | None,
+        Field(
+            description=(
+                "List of {text, owner, cadence, marked, status} to populate the "
+                "delegated-tasks page(s). cadence is 'daily'|'weekly'|'monthly'; "
+                "owner/status/marked are optional. Omit entirely (or pass an empty "
+                "list) to leave the agenda with no delegated-tasks page at all."
+            )
+        ),
+    ] = None,
     render: Annotated[
         bool, Field(description="Render the finished agenda to PDF at the end of this call.")
     ] = False,
@@ -75,18 +86,22 @@ def create_agenda(
     calendar header (day/weekday/CW/month/year) on every page and the 'NEXT
     FOUR WEEKS' grid, refreshes every calendar block (as adjust_dates would),
     adds every meeting in `meetings`, fills `daily_schedule` slots, appends
-    `tasks`, and renders to PDF if `render` is true (also written to
-    `output_dir` if given). Always starts from a blank template — if an
-    agenda for this date already exists, it is discarded and replaced. The
-    working agenda lives only in this server's memory until rendered/exported
-    -- nothing touches disk otherwise. Use adjust_dates/add_meeting/
-    add_daily_schedule/add_tasks/render_pdf on their own afterwards for
-    one-off adjustments."""
+    `tasks`, populates the delegated-tasks page(s) with `delegated_tasks`,
+    and renders to PDF if `render` is true (also written to `output_dir` if
+    given). Always starts from a blank template — if an agenda for this date
+    already exists, it is discarded and replaced. The working agenda lives
+    only in this server's memory until rendered/exported -- nothing touches
+    disk otherwise. The delegated-tasks page ships in the template but is
+    dropped whenever there's nothing delegated (no `delegated_tasks` here
+    and no later add_delegated_tasks call). Use adjust_dates/add_meeting/
+    add_daily_schedule/add_tasks/add_delegated_tasks/render_pdf on their own
+    afterwards for one-off adjustments."""
     return tools.create_agenda(
         date,
         meetings=meetings,
         daily_schedule=daily_schedule,
         tasks=tasks,
+        delegated_tasks=delegated_tasks,
         render=render,
         include_base64=include_base64,
         output_dir=output_dir,
@@ -160,6 +175,35 @@ def add_tasks(
     (18 rows total). Only mutates the in-memory working agenda -- nothing
     touches disk."""
     return tools.add_tasks(date, tasks)
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=False))
+def add_delegated_tasks(
+    date: Annotated[str, Field(description="ISO date YYYY-MM-DD of the agenda to edit")],
+    tasks: Annotated[
+        list[dict],
+        Field(
+            description=(
+                "List of {text, owner, cadence, marked, status}. cadence is "
+                "'daily'|'weekly'|'monthly'. owner is free-form text, centered in its "
+                "column. status is optional free-form text rendered as a bullet list "
+                "(split on '\\n' — each line becomes its own bullet); most of the row "
+                "is left blank on purpose, as room for a handwritten status update. "
+                "marked (bool, default false) highlights the row with the template's "
+                "green background."
+            )
+        ),
+    ],
+) -> dict:
+    """Add rows to the delegated-tasks page(s), one row per task. Merges
+    with whatever delegated tasks already exist on the page and re-sorts the
+    full set: marked rows first, then unmarked; within each group, daily
+    before weekly before monthly. Uses as many pages as needed and never
+    leaves a trailing empty row. If this is the agenda's first delegated
+    task, the page (dropped by create_agenda when nothing is delegated) is
+    added back. Only mutates the in-memory working agenda -- nothing touches
+    disk."""
+    return tools.add_delegated_tasks(date, tasks)
 
 
 # See the readOnlyHint note above create_agenda -- same rationale applies here.

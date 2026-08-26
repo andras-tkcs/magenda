@@ -1,4 +1,5 @@
 from magenda.tools.add_daily_schedule import add_daily_schedule
+from magenda.tools.add_delegated_tasks import add_delegated_tasks
 from magenda.tools.add_meeting import add_meeting
 from magenda.tools.add_tasks import add_tasks
 from magenda.tools.adjust_dates import adjust_dates
@@ -11,5 +12,6 @@ __all__ = [
     "add_meeting",
     "add_daily_schedule",
     "add_tasks",
+    "add_delegated_tasks",
     "render_pdf",
 ]

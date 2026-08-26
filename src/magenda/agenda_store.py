@@ -18,6 +18,7 @@ from magenda.xml_ops import (
     MagendaError,
     blank_meeting_title_slot,
     ensure_further_notes_page_break,
+    remove_delegated_tasks_page,
     strip_meeting_notes_footer,
 )
 
@@ -79,6 +80,7 @@ def create(date: datetime.date) -> AgendaDocument:
     blank_meeting_title_slot(doc.body)
     strip_meeting_notes_footer(doc.body)
     ensure_further_notes_page_break(doc.body)
+    remove_delegated_tasks_page(doc.body)
     return doc
 
 

@@ -131,3 +131,67 @@ def test_add_tasks_capacity_error_reports_remaining():
     tools.create_agenda(date)
     with pytest.raises(MagendaError, match="18 free"):
         tools.add_tasks(date, [{"text": f"task {i}"} for i in range(19)])
+
+
+def test_agenda_has_no_delegated_page_by_default():
+    date = "2026-09-04"
+    tools.create_agenda(date)
+
+    result = tools.render_pdf(date)
+    doc = _open_pdf(result)
+    # overview (1) + blank meeting-1 slot (1) + closing (1) — no
+    # delegated-tasks page, no trailing blank page.
+    assert len(doc) == 3
+    full_text = "".join(page.get_text() for page in doc)
+    assert "Task & cadence" not in full_text
+    for page in doc:
+        assert page.get_text().strip() != ""
+
+
+def test_add_delegated_tasks_adds_the_page_back_and_orders_rows():
+    date = "2026-09-05"
+    tools.create_agenda(date)
+    tools.add_delegated_tasks(
+        date,
+        [
+            {"text": "Renew SSL certs", "owner": "Bence", "cadence": "monthly"},
+            {"text": "Backup shared drive", "owner": "Kata", "cadence": "daily", "marked": True},
+            {"text": "Water the plants", "owner": "Taki", "cadence": "daily"},
+        ],
+    )
+
+    result = tools.render_pdf(date)
+    doc = _open_pdf(result)
+    # overview (1) + delegated (1) + blank meeting-1 slot (1) + closing (1).
+    assert len(doc) == 4
+    for page in doc:
+        assert page.get_text().strip() != ""
+
+    delegated_text = doc[1].get_text()
+    assert "Task & cadence".upper() in delegated_text.upper()
+    marked_idx = delegated_text.index("Backup shared drive")
+    daily_idx = delegated_text.index("Water the plants")
+    monthly_idx = delegated_text.index("Renew SSL certs")
+    assert marked_idx < daily_idx < monthly_idx  # marked first, then daily before monthly
+
+
+def test_add_delegated_tasks_merges_and_resorts_across_calls():
+    date = "2026-09-06"
+    tools.create_agenda(date)
+    tools.add_delegated_tasks(date, [{"text": "First batch task", "cadence": "monthly"}])
+    tools.add_delegated_tasks(
+        date, [{"text": "Second batch, marked", "cadence": "weekly", "marked": True}]
+    )
+
+    result = tools.render_pdf(date)
+    doc = _open_pdf(result)
+    delegated_text = doc[1].get_text()
+    # the second call's marked task now sorts ahead of the first call's unmarked one
+    assert delegated_text.index("Second batch, marked") < delegated_text.index("First batch task")
+
+
+def test_add_delegated_tasks_rejects_bad_cadence():
+    date = "2026-09-07"
+    tools.create_agenda(date)
+    with pytest.raises(MagendaError):
+        tools.add_delegated_tasks(date, [{"text": "Bad cadence", "cadence": "yearly"}])

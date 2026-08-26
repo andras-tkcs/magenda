@@ -67,6 +67,16 @@ def main() -> None:
     print(" ", tools.add_tasks(date, task_entries))
     print("   expected: the long task shrinks to 9pt, then wraps across multiple lines")
 
+    print("\n→ add_delegated_tasks")
+    delegated_entries = [
+        {"text": "Renew the SSL certs", "owner": "Bence", "cadence": "monthly"},
+        {"text": "Ship the weekly report", "owner": "Andrea", "cadence": "weekly", "marked": True},
+        {"text": "Water the office plants", "owner": "Taki", "cadence": "daily"},
+        {"text": "Back up the shared drive", "owner": "Kata", "cadence": "daily", "marked": True, "status": "In progress"},
+    ]
+    print(" ", tools.add_delegated_tasks(date, delegated_entries))
+    print("   expected: marked rows (green) first, then unmarked; each group daily -> weekly -> monthly")
+
     print("\n→ render_pdf")
     out_dir = Path(tempfile.gettempdir()) / "magenda-manual-test"
     result = tools.render_pdf(date, output_dir=str(out_dir))
@@ -79,8 +89,8 @@ def main() -> None:
 
         page_count = len(fitz.open(pdf_path))
         print(f"\n→ page count: {page_count}")
-        print("   expected: 5 — page 1 (to-do + daily schedule) + 3 meeting pages")
-        print("   + 1 closing page. No trailing blank page, no page-1 overflow.")
+        print("   expected: 6 — page 1 (to-do + daily schedule) + delegated-tasks page")
+        print("   + 3 meeting pages + 1 closing page. No trailing blank page, no overflow.")
     except ImportError:
         pass
 
