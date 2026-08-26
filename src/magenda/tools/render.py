@@ -1,45 +1,39 @@
 import base64
-import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 
-from magenda import agenda_store, font_setup
+from magenda import agenda_store, config, font_setup, theme
+from magenda.agenda_store import AgendaDocument
+from magenda.soffice import find_soffice
 from magenda.tools._common import parse_date
 from magenda.xml_ops import MagendaError
 
-_SOFFICE_CANDIDATES = [
-    "soffice",
-    "/Applications/LibreOffice.app/Contents/MacOS/soffice",
-    "/opt/homebrew/bin/soffice",
-    "/usr/bin/soffice",
-]
-
-
-def _find_soffice() -> str:
-    for candidate in _SOFFICE_CANDIDATES:
-        found = shutil.which(candidate) or (candidate if Path(candidate).exists() else None)
-        if found:
-            return found
-    raise MagendaError(
-        "LibreOffice ('soffice') was not found. Install it (e.g. `brew install --cask "
-        "libreoffice` on macOS) so agendas can be rendered to PDF deterministically."
-    )
+# Kept as an alias: theme.py pre-dates this move and other code may still
+# import _find_soffice from here.
+_find_soffice = find_soffice
 
 
 def render_pdf(date: str, include_base64: bool = False, output_dir: str | None = None) -> dict:
     """Render the working docx for `date` to PDF via headless LibreOffice,
-    after ensuring the bundled Outfit fonts are installed so the output is
-    pixel-identical regardless of which machine renders it. The conversion
-    itself happens in a throwaway temp directory that's removed as soon as
-    this call returns. By default nothing is left on disk -- the PDF bytes
-    come back as base64. Pass `output_dir` to also write a persistent copy
-    there instead (the directory is created if it doesn't exist)."""
+    after ensuring the bundled fonts are installed so the output is
+    pixel-identical regardless of which machine renders it. Applies the
+    active font-pack/color theme (see magenda.config, set via the extension's
+    Settings page or MAGENDA_* env vars) to a throwaway clone of the working
+    document -- the in-memory working agenda itself is never touched, so
+    later tool calls for this date keep seeing the template's original
+    Outfit-named runs regardless of what's configured. The conversion itself
+    happens in a throwaway temp directory that's removed as soon as this
+    call returns. By default nothing is left on disk -- the PDF bytes come
+    back as base64. Pass `output_dir` to also write a persistent copy there
+    instead (the directory is created if it doesn't exist)."""
     d = parse_date(date)
-    doc = agenda_store.load(d)
+    live_doc = agenda_store.load(d)
+    doc = AgendaDocument.from_bytes(live_doc.to_bytes())
+    theme.apply_theme(doc.tree, config.get_active_theme())
 
     font_setup.ensure_fonts_installed()
-    soffice = _find_soffice()
+    soffice = find_soffice()
 
     with tempfile.TemporaryDirectory(prefix="magenda-") as tmp:
         tmp_dir = Path(tmp)

@@ -15,15 +15,17 @@ from pathlib import Path
 
 from PIL import ImageFont
 
+from magenda.font_packs import FONT_PACKS
 from magenda.paths import FONTS_DIR
 
-_FONT_FILES = {
-    "Outfit": "Outfit-Regular.ttf",
-    "Outfit Thin": "Outfit-Thin.ttf",
-    "Outfit ExtraLight": "Outfit-ExtraLight.ttf",
-    "Outfit SemiBold": "Outfit-SemiBold.ttf",
-    "Outfit Black": "Outfit-Black.ttf",
-}
+# Flattened from every registered pack (see font_packs.py): family name (as
+# it appears in a run's w:rFonts) -> its ttf filename under FONTS_DIR. Covers
+# whichever pack a run's font was swapped to by theme.apply_font_pack, as
+# well as the template's own original Outfit names.
+_FONT_FILES: dict[str, str] = {}
+for _pack in FONT_PACKS.values():
+    for _bucket, _family in _pack["weights"].items():
+        _FONT_FILES[_family] = _pack["files"][_bucket]
 
 
 @lru_cache(maxsize=None)

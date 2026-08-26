@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "magenda",
   "display_name": "magenda",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "MCP server that generates a deterministic, pixel-identical daily agenda PDF from a fixed docx template.",
   "long_description": "Magenda generates a daily agenda PDF laid out exactly like a fixed docx template. Tools only inject plain text into known slots or clone pre-formatted pages -- there is no AI-generated layout -- then a pinned LibreOffice headless build renders the result to PDF. Requires LibreOffice (`brew install --cask libreoffice`), which is not bundled.",
   "author": {
@@ -19,7 +19,51 @@
     "entry_point": "server/magenda",
     "mcp_config": {
       "command": "${__dirname}/server/magenda",
-      "args": []
+      "args": [],
+      "env": {
+        "MAGENDA_FONT_PACK": "${user_config.font_pack}",
+        "MAGENDA_WEEKEND_COLOR": "${user_config.weekend_color}",
+        "MAGENDA_HEADING_COLOR": "${user_config.heading_color}",
+        "MAGENDA_LABEL_COLOR": "${user_config.label_color}",
+        "MAGENDA_NOTES_COLOR": "${user_config.notes_color}"
+      }
+    }
+  },
+  "user_config": {
+    "font_pack": {
+      "type": "string",
+      "title": "Font",
+      "description": "Certified font pack: outfit (default), roboto, jetbrains_mono",
+      "default": "outfit",
+      "required": false
+    },
+    "weekend_color": {
+      "type": "string",
+      "title": "Weekend date color",
+      "description": "Hex RRGGBB for Saturday/Sunday weekday-header labels and dates",
+      "default": "EE0000",
+      "required": false
+    },
+    "heading_color": {
+      "type": "string",
+      "title": "Date heading color",
+      "description": "Hex RRGGBB for the big day/month/year heading",
+      "default": "0DB04B",
+      "required": false
+    },
+    "label_color": {
+      "type": "string",
+      "title": "Section label color",
+      "description": "Hex RRGGBB for section headers, e.g. TO-DO LIST / DAILY SCHEDULE / table column headers",
+      "default": "F95738",
+      "required": false
+    },
+    "notes_color": {
+      "type": "string",
+      "title": "Notes header color",
+      "description": "Hex RRGGBB for the \"Further notes from today\" header",
+      "default": "FFCB47",
+      "required": false
     }
   },
   "compatibility": {
