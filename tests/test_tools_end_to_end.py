@@ -20,6 +20,17 @@ def _open_pdf(result: dict):
     return fitz.open(stream=base64.b64decode(result["pdf_base64"]), filetype="pdf")
 
 
+def _link_target_at(page, rect) -> int | None:
+    """The target page of whichever link on `page` overlaps `rect`, or None.
+    Overlap rather than exact equality, since a link's stored 'from' rect
+    can differ from a freshly re-searched rect for the same text by a
+    hair (float round-trip through PDF serialization)."""
+    for link in page.get_links():
+        if rect.intersects(link["from"]):
+            return link["page"]
+    return None
+
+
 def test_full_agenda_lifecycle(tmp_path):
     date = "2026-08-14"  # a Friday
 
@@ -195,3 +206,111 @@ def test_add_delegated_tasks_rejects_bad_cadence():
     tools.create_agenda(date)
     with pytest.raises(MagendaError):
         tools.add_delegated_tasks(date, [{"text": "Bad cadence", "cadence": "yearly"}])
+
+
+def test_daily_schedule_entry_links_to_its_meeting_page():
+    date = "2026-09-08"
+    tools.create_agenda(date)
+    tools.add_daily_schedule(
+        date,
+        [
+            {"time": "09:00", "text": "Budget review"},
+            {"time": "11:00", "text": "Client handoff"},
+            {"time": "14:30", "text": "Standup (not a meeting)"},
+        ],
+    )
+    tools.add_meeting(date, "Budget review")
+    tools.add_meeting(date, "Client handoff")
+
+    result = tools.render_pdf(date)
+    doc = _open_pdf(result)
+    # overview (1) + 2 meetings + closing (1).
+    assert len(doc) == 4
+
+    budget_rect = doc[0].search_for("Budget review")[0]
+    handoff_rect = doc[0].search_for("Client handoff")[0]
+    assert _link_target_at(doc[0], budget_rect) == 1  # first meeting page
+    assert _link_target_at(doc[0], handoff_rect) == 2  # second meeting page
+
+    # An entry that doesn't name a meeting gets no link.
+    standup_rect = doc[0].search_for("Standup (not a meeting)")[0]
+    assert _link_target_at(doc[0], standup_rect) is None
+
+
+def test_daily_schedule_link_accounts_for_delegated_pages_and_truncation():
+    date = "2026-09-09"
+    tools.create_agenda(date)
+    tools.add_delegated_tasks(date, [{"text": f"Task {i}"} for i in range(20)])  # multiple delegated pages
+    long_title = "Quarterly budget deep dive and roadmap alignment meeting with a much longer title than fits"
+    tools.add_daily_schedule(date, [{"time": "09:00", "text": long_title}])
+    tools.add_meeting(date, long_title)
+
+    result = tools.render_pdf(date)
+    doc = _open_pdf(result)
+    num_delegated_pages = len(doc) - 3  # overview + meeting + closing take up the rest
+    assert num_delegated_pages >= 2
+    meeting_page = 1 + num_delegated_pages  # after overview + delegated pages
+
+    # Page 0 also carries its own "Notes >>" header link (target: the
+    # closing page) -- filter to the meeting page's target to isolate the
+    # schedule-entry link, since its own (truncated) rendered text isn't
+    # known ahead of time here.
+    targets = [l["page"] for l in doc[0].get_links()]
+    assert targets.count(meeting_page) == 1
+
+
+def test_header_overview_and_notes_links_on_every_page():
+    """Every page but the overview gets a "<< Overview" link back to page 0
+    and a "Notes >>" link to the closing page (always the PDF's last page,
+    wherever it currently falls) -- both landing correctly regardless of how
+    many meeting pages currently exist."""
+    date = "2026-09-10"
+    tools.create_agenda(date)
+    tools.add_delegated_tasks(date, [{"text": "Water the plants"}])
+    tools.add_meeting(date, "First")
+    tools.add_meeting(date, "Second")
+
+    result = tools.render_pdf(date)
+    doc = _open_pdf(result)
+    # overview (1) + delegated (1) + 2 meetings + closing (1).
+    assert len(doc) == 5
+    last_page = len(doc) - 1
+
+    for i, page in enumerate(doc):
+        targets = {l["page"] for l in page.get_links()}
+        if i != 0:
+            assert 0 in targets, f"page {i} missing the Overview link"
+        else:
+            assert 0 not in targets, "overview page should not link to itself"
+        if i != last_page:
+            assert last_page in targets, f"page {i} missing the Notes link"
+        else:
+            assert last_page not in targets, "closing page should not link to itself"
+
+
+def test_notes_link_still_lands_on_closing_page_after_more_meetings_added():
+    """Regression for the dynamic case: adding meetings after an earlier
+    render must not leave a stale 'Notes >>' target -- each render_pdf call
+    recomputes the closing page's position fresh."""
+    date = "2026-09-11"
+    tools.create_agenda(date)
+    tools.add_meeting(date, "First")
+    tools.add_meeting(date, "Second")
+
+    doc1 = _open_pdf(tools.render_pdf(date))
+    assert len(doc1) == 4  # overview + 2 meetings + closing
+    assert doc1[0].get_links()[-1]["page"] == 3
+
+    tools.add_meeting(date, "Third")
+    tools.add_meeting(date, "Fourth")
+    tools.add_meeting(date, "Fifth")
+
+    doc2 = _open_pdf(tools.render_pdf(date))
+    assert len(doc2) == 7  # overview + 5 meetings + closing
+    last_page = len(doc2) - 1
+    assert last_page == 6
+    for i, page in enumerate(doc2):
+        if i == last_page:
+            continue
+        targets = {l["page"] for l in page.get_links()}
+        assert last_page in targets, f"page {i} should still link to the (now-later) closing page"

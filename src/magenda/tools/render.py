@@ -3,7 +3,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from magenda import agenda_store, config, font_setup, theme
+from magenda import agenda_store, config, font_setup, pdf_links, theme
 from magenda.agenda_store import AgendaDocument
 from magenda.soffice import find_soffice
 from magenda.tools._common import parse_date
@@ -26,7 +26,14 @@ def render_pdf(date: str, include_base64: bool = False, output_dir: str | None =
     happens in a throwaway temp directory that's removed as soon as this
     call returns. By default nothing is left on disk -- the PDF bytes come
     back as base64. Pass `output_dir` to also write a persistent copy there
-    instead (the directory is created if it doesn't exist)."""
+    instead (the directory is created if it doesn't exist).
+
+    Before returning, internal navigation links are added: each page-1
+    daily-schedule entry that names a meeting links to that meeting's notes
+    page, the header's "<< Overview" label links back to page 1 on every
+    other page, and the header's "Notes >>" label links to the closing
+    "Further notes" page (always the last page) on every other page (see
+    pdf_links.add_navigation_links)."""
     d = parse_date(date)
     live_doc = agenda_store.load(d)
     doc = AgendaDocument.from_bytes(live_doc.to_bytes())
@@ -53,6 +60,8 @@ def render_pdf(date: str, include_base64: bool = False, output_dir: str | None =
                 f"(exit {result.returncode}): {result.stderr or result.stdout}"
             )
         pdf_bytes = pdf_tmp_path.read_bytes()
+
+    pdf_bytes = pdf_links.add_navigation_links(pdf_bytes, doc.body)
 
     response: dict = {"date": d.isoformat()}
     if output_dir:
