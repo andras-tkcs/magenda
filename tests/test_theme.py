@@ -115,7 +115,7 @@ def test_apply_colors_leaves_unrelated_colors_untouched():
     # unchanged. F95738 is one such leftover: the template's own shipped
     # sample delegated-tasks rows (dropped by create_agenda, never part of
     # a rebuilt page -- see xml_ops._delegated_body_rpr, which colors
-    # *generated* rows with label_color instead) bake it into their
+    # *generated* rows plain black instead) bake it into their
     # paragraph-mark formatting, and it isn't one of the 5 themed roles.
     tree = fresh_tree()
     before = _color_values(tree)

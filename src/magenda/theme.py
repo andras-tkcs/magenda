@@ -42,8 +42,9 @@ _OUTFIT_WEIGHTS = FONT_PACKS["outfit"]["weights"]
 #   heading  — the big day/month/year heading ("19 TUESDAY", "MAY 2026"),
 #              now in the document's Word header part
 #   label    — section headers and table column headers (TO-DO LIST, DAILY
-#              SCHEDULE, Task & cadence/Owner/Status), the delegated-tasks
-#              row numbers, and delegated-tasks body text (task/owner/status)
+#              SCHEDULE, Task & cadence/Owner/Status) and the delegated-tasks
+#              row numbers (delegated-tasks body text -- task/owner/status --
+#              is plain black and isn't themed)
 #   accent   — "Meeting title:" and the delegated-tasks page's own
 #              "Notes and updates" footer heading
 #   notes    — the closing "Further notes from today" header

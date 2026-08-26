@@ -311,7 +311,7 @@ def test_delegated_tasks_rows_are_numbered_in_order():
     assert numbers == ["1", "2", "3"]
 
 
-def test_delegated_body_text_matches_row_number_and_header_color():
+def test_delegated_row_number_matches_header_color_body_text_is_black():
     doc = fresh_doc()
     xml_ops.rebuild_delegated_tasks(
         doc.body, [_task("A", owner="Andrea", status="Doing fine")]
@@ -322,9 +322,29 @@ def test_delegated_body_text_matches_row_number_and_header_color():
     ).get(xml_ops.qn("w:val"))
     data_row = table.findall("w:tr", xml_ops.NS)[1]
     cells = data_row.findall("w:tc", xml_ops.NS)
-    for cell in cells:  # number, task/cadence, owner, status
+    number_cell, task_cell, owner_cell, status_cell = cells
+    for color in number_cell.findall(".//w:color", xml_ops.NS):
+        assert color.get(xml_ops.qn("w:val")) == header_color
+    for cell in (task_cell, owner_cell, status_cell):
         for color in cell.findall(".//w:color", xml_ops.NS):
-            assert color.get(xml_ops.qn("w:val")) == header_color
+            assert color.get(xml_ops.qn("w:val")) == "000000"
+
+
+def test_delegated_header_row_repeats_across_pages():
+    doc = fresh_doc()
+    xml_ops.rebuild_delegated_tasks(doc.body, [_task("A")])
+    table = xml_ops.find_delegated_tables(doc.body)[0]
+    header_row = table.findall("w:tr", xml_ops.NS)[0]
+    assert header_row.find("w:trPr/w:tblHeader", xml_ops.NS) is not None
+
+
+def test_delegated_body_font_size_is_one_point_above_old_default():
+    doc = fresh_doc()
+    xml_ops.rebuild_delegated_tasks(doc.body, [_task("A", owner="Andrea")])
+    table = xml_ops.find_delegated_tables(doc.body)[0]
+    owner_cell = table.findall("w:tr", xml_ops.NS)[1].findall("w:tc", xml_ops.NS)[2]
+    sz = owner_cell.find("w:p/w:r/w:rPr/w:sz", xml_ops.NS)
+    assert sz.get(xml_ops.qn("w:val")) == "22"  # 11pt, was 10pt
 
 
 def test_owner_column_centered():

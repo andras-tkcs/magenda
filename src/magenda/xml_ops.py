@@ -691,9 +691,9 @@ DELEGATED_MARK_FILL = "D6FCEC"
 DELEGATED_HEADER_FILL = "D9D9D9"
 DELEGATED_CADENCE_LABELS = {"daily": "Daily", "weekly": "Weekly", "monthly": "Monthly"}
 DELEGATED_CADENCE_ORDER = {"daily": 0, "weekly": 1, "monthly": 2}
-DELEGATED_TASK_MAX_FONT_SIZE = 20  # half-points (10pt) — the template's own default
-DELEGATED_TASK_MIN_FONT_SIZE = 16  # half-points (8pt) — floor before wrapping kicks in
-DELEGATED_CADENCE_FONT_SIZE = 16  # half-points (8pt) — small label above the task text
+DELEGATED_TASK_MAX_FONT_SIZE = 22  # half-points (11pt) — the template's own default, +1pt
+DELEGATED_TASK_MIN_FONT_SIZE = 18  # half-points (9pt) — floor before wrapping kicks in, +1pt
+DELEGATED_CADENCE_FONT_SIZE = 18  # half-points (9pt) — small label above the task text, +1pt
 DELEGATED_BULLET_PREFIX = "• "  # bullet + a thin space, for a minimal bullet-to-text gap
 
 # Determined empirically by rendering: rows no longer have a fixed height
@@ -872,7 +872,16 @@ def _build_delegated_table_shell() -> etree._Element:
     _insert_delegated_tasks_page — since a variable, per-date number of data
     rows means there's no single template table left in the saved doc once
     the page has been removed (remove_delegated_tasks_page) or spans more
-    than one page."""
+    than one page.
+
+    The header row carries w:trPr/w:tblHeader, so Word/LibreOffice repeat it
+    automatically if this table's own rows ever make it break across pages
+    on their own (DELEGATED_ROWS_PER_PAGE is a worst-case estimate, not a
+    guarantee -- unusually tall wrapped content can still overflow one
+    page). Explicit page-driven breaks (rebuild_delegated_tasks starting a
+    new page once DELEGATED_ROWS_PER_PAGE is reached) already get a fresh
+    header via a brand new call to this function, so this only matters for
+    that unplanned-overflow case."""
     tbl = etree.Element(qn("w:tbl"))
     tblPr = etree.SubElement(tbl, qn("w:tblPr"))
     style = etree.SubElement(tblPr, qn("w:tblStyle"))
@@ -893,6 +902,8 @@ def _build_delegated_table_shell() -> etree._Element:
         col.set(qn("w:w"), str(_DELEGATED_COLUMN_WIDTHS[key]))
 
     header_row = etree.SubElement(tbl, qn("w:tr"))
+    trPr = etree.SubElement(header_row, qn("w:trPr"))
+    etree.SubElement(trPr, qn("w:tblHeader"))
     labels = {"number": "", "task": "Task & cadence", "owner": "Owner", "status": "Status"}
     for key in _DELEGATED_COLUMN_ORDER:
         tc = etree.SubElement(header_row, qn("w:tc"))
@@ -942,23 +953,24 @@ def _insert_delegated_tasks_page(body: etree._Element) -> tuple[etree._Element, 
 
 
 def _delegated_body_rpr() -> etree._Element:
-    """Run properties for delegated-row body text (Outfit ExtraLight, 10pt)
+    """Run properties for delegated-row body text (Outfit ExtraLight, 11pt)
     — rows are built programmatically since their count varies per date, so
     there's no single template row left in the saved doc to clone from once
-    remove_delegated_tasks_page has run. Colored with the same label_color
-    accent as the row numbers and column headers (TO-DO LIST, Task &
-    cadence/Owner/Status) rather than the template's own sample rows' color
-    (F95738, a leftover from the previous template's palette) -- a
-    deliberate override, not a transcription."""
+    remove_delegated_tasks_page has run. Colored plain black rather than the
+    label_color accent used by the row numbers and column headers (TO-DO
+    LIST, Task & cadence/Owner/Status) -- task/owner/status text stays black
+    regardless of theme, unlike those two -- and rather than the template's
+    own sample rows' color (F95738, a leftover from the previous template's
+    palette) -- both deliberate overrides, not transcriptions."""
     rpr = etree.Element(qn("w:rPr"))
     fonts = etree.SubElement(rpr, qn("w:rFonts"))
     fonts.set(qn("w:ascii"), "Outfit ExtraLight")
     fonts.set(qn("w:hAnsi"), "Outfit ExtraLight")
     color = etree.SubElement(rpr, qn("w:color"))
-    color.set(qn("w:val"), "BF4E14")
+    color.set(qn("w:val"), "000000")
     for tag in ("w:sz", "w:szCs"):
         sz = etree.SubElement(rpr, qn(tag))
-        sz.set(qn("w:val"), "20")
+        sz.set(qn("w:val"), "22")
     return rpr
 
 
@@ -1011,7 +1023,17 @@ def _delegated_row(marked: bool, top_sz: int, bottom_sz: int | None, number: int
             )
         )
     number_cell = tr.findall("w:tc", NS)[0]
-    r = etree.SubElement(number_cell.find("w:p", NS), qn("w:r"))
+    number_p = number_cell.find("w:p", NS)
+    # Overwrite the paragraph-mark rPr that _delegated_cell put here (the
+    # black body-text one, appropriate for the other 3 columns) with the
+    # header/label one, so the number column stays label_color-themed
+    # end to end -- both the actual run below and the mark formatting an
+    # empty paragraph would otherwise fall back to.
+    old_mark_rpr = number_p.find("w:pPr/w:rPr", NS)
+    if old_mark_rpr is not None:
+        old_mark_rpr.getparent().remove(old_mark_rpr)
+    number_p.find("w:pPr", NS).append(_delegated_header_rpr())
+    r = etree.SubElement(number_p, qn("w:r"))
     r.append(_delegated_header_rpr())
     t = etree.SubElement(r, qn("w:t"))
     t.text = str(number)

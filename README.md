@@ -65,7 +65,7 @@ change. Its font and 5 accent colors are configurable, though:
 | Font pack | `outfit` | every text run in the template |
 | Weekend color | `EE0000` | Saturday/Sunday weekday-header labels and dates |
 | Date heading color | `215E99` | the big day/month/year heading (e.g. "19 TUESDAY"), in the page header |
-| Section label color | `BF4E14` | section headers and table column headers (TO-DO LIST, DAILY SCHEDULE, Task & cadence/Owner/Status), the delegated-tasks row numbers, and delegated-tasks body text (task/owner/status) |
+| Section label color | `BF4E14` | section headers and table column headers (TO-DO LIST, DAILY SCHEDULE, Task & cadence/Owner/Status) and the delegated-tasks row numbers (delegated-tasks body text — task/owner/status — is always plain black, not themed) |
 | Accent color | `3A7C22` | "Meeting title:" and the delegated-tasks page's own "Notes and updates" footer heading |
 | Notes header color | `00B0F0` | the "Further notes from today" header |
 
