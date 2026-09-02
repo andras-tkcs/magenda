@@ -14,7 +14,7 @@ from __future__ import annotations
 import pymupdf
 
 from magenda import compiled_template, layout_constants as LC, pdf_links, theme as theme_mod
-from magenda.agenda_state import AgendaState, delegated_page_count, schedule_slot_ids
+from magenda.agenda_state import AgendaState, DelegatedTask, schedule_slot_ids
 from magenda.slot_schema import Slot
 from magenda.theme import Theme
 
@@ -206,7 +206,7 @@ _DELEGATED_HEADER_LABELS = {
 }
 
 
-def _draw_delegated_page(page: pymupdf.Page, manifest, tasks: list, theme: Theme) -> None:
+def _draw_delegated_page(page: pymupdf.Page, manifest, tasks: list, theme: Theme, *, is_last_page: bool = True) -> None:
     geom = manifest.delegated
     x0 = geom.table_top_left[0]
     y = geom.table_top_left[1]
@@ -242,11 +242,10 @@ def _draw_delegated_page(page: pymupdf.Page, manifest, tasks: list, theme: Theme
         if slot.id not in _DELEGATED_HEADER_LABELS:
             _draw_slot(page, slot, None, theme)
     line_height = _line_height_pt(body_family_weight, LC.DELEGATED_TASK_MAX_FONT_SIZE, theme)
+    base_row_height = geom.row_overhead_twips / 20
 
     for i, task in enumerate(tasks):
-        content_lines = max(len(task.task_lines), len(task.status_lines) or 1, 1)
-        extra = max(0, content_lines - 2)
-        row_height = geom.row_overhead_twips / 20 + extra * line_height
+        row_height = _delegated_row_height(task, base_row_height, line_height)
         border_sz = thick if i == 0 else thin
         # top border
         page.draw_line((x0, y), (table_right, y), color=(0, 0, 0), width=border_sz)
@@ -274,10 +273,77 @@ def _draw_delegated_page(page: pymupdf.Page, manifest, tasks: list, theme: Theme
 
         y = row_rect_bottom
 
-    # closing bottom border, except the template's own convention of
-    # leaving the very last row's bottom edge open (see the pre-rewrite
-    # xml_ops._strip_row_bottom_border) -- draw one whenever this page
-    # isn't the set's last page; the caller decides that.
+    # Closing bottom border: the template's own convention (see the
+    # pre-rewrite xml_ops._strip_row_bottom_border) is that only the very
+    # last row of the very last page leaves its bottom edge open -- every
+    # other page's table looks visually cut off without a line closing it,
+    # since more rows continue overleaf.
+    if not is_last_page:
+        page.draw_line((x0, y), (table_right, y), color=(0, 0, 0), width=thin)
+
+
+def _delegated_row_height(task, base_row_height: float, line_height: float) -> float:
+    """Full row height (points) for one delegated task, given the
+    calibrated 2-line base height (DelegatedGeometry.row_overhead_twips)
+    and the active theme's line height -- grows past the base once the
+    task or status cell wraps onto more than 2 lines. Shared between the
+    pagination planner (_plan_delegated_pages) and the drawing loop
+    (_draw_delegated_page) so the two can never disagree about how tall a
+    row is -- which is exactly what would let a row be planned onto one
+    page but actually get drawn spilling onto the next."""
+    content_lines = max(len(task.task_lines), len(task.status_lines) or 1, 1)
+    extra = max(0, content_lines - 2)
+    return base_row_height + extra * line_height
+
+
+def _delegated_max_y(manifest) -> float:
+    """The lowest Y a delegated-tasks row may extend to before it would
+    run into the "Notes and updates" footer label below the table (see
+    scripts/compile_template.py's build_delegated_fixture) -- the actual
+    page-break boundary _plan_delegated_pages fits rows against. Falls
+    back to a generic page-bottom margin if the manifest doesn't carry
+    that slot (e.g. an older compiled bundle)."""
+    by_id = {s.id: s for s in manifest.page_slots.get("delegated_shell", [])}
+    footer = by_id.get("delegated.footer_label")
+    if footer is not None:
+        return footer.rect[1] - LC.DELEGATED_TABLE_BOTTOM_GAP_PT
+    return manifest.page_height - 72  # 1" fallback margin
+
+
+def _plan_delegated_pages(tasks: list[DelegatedTask], manifest, theme: Theme) -> list[list]:
+    """Group `tasks` into delegated-tasks pages, never splitting a row
+    across two pages: a row that wouldn't fully fit in the space left on
+    the current page starts a fresh page instead of overflowing into it
+    (mirrors Word's "keep row together" table option, which the
+    pre-rewrite docx-based renderer got for free from the OOXML table
+    layout engine and this procedural one has to reproduce by hand). This
+    replaces the old fixed DELEGATED_ROWS_PER_PAGE-per-page count, which
+    ignored actual row heights entirely -- a handful of tall wrapped rows
+    could overflow a page's printable area, and a run of short ones left
+    a page under-full. A single row taller than an entire empty page still
+    gets a page of its own rather than being silently dropped."""
+    if not tasks:
+        return []
+    geom = manifest.delegated
+    base_row_height = geom.row_overhead_twips / 20
+    line_height = _line_height_pt(LC.DELEGATED_TASK_FAMILY_WEIGHT, LC.DELEGATED_TASK_MAX_FONT_SIZE, theme)
+    max_y = _delegated_max_y(manifest)
+    top_y = geom.table_top_left[1]
+
+    pages: list[list] = []
+    current: list = []
+    y = top_y
+    for task in tasks:
+        row_height = _delegated_row_height(task, base_row_height, line_height)
+        if current and y + row_height > max_y:
+            pages.append(current)
+            current = []
+            y = top_y
+        current.append(task)
+        y += row_height
+    if current:
+        pages.append(current)
+    return pages
 
 
 def _line_height_pt(weight: str, size_half_points: int, theme: Theme) -> float:
@@ -302,7 +368,8 @@ def assemble(state: AgendaState, theme: Theme) -> bytes:
     manifest = ct.manifest
     chrome_src = pymupdf.open(stream=ct.chrome_bytes, filetype="pdf")
 
-    n_delegated = delegated_page_count(state)
+    delegated_pages = _plan_delegated_pages(state.delegated_tasks, manifest, theme)
+    n_delegated = len(delegated_pages)
     plan = ["overview"] + ["delegated_shell"] * n_delegated + ["meeting_unit"] * len(state.meetings) + ["further_notes"]
 
     out = pymupdf.open()
@@ -317,9 +384,8 @@ def assemble(state: AgendaState, theme: Theme) -> bytes:
 
     _draw_overview(out[0], manifest, state, theme)
 
-    for i in range(n_delegated):
-        page_tasks = state.delegated_tasks[i * LC.DELEGATED_ROWS_PER_PAGE:(i + 1) * LC.DELEGATED_ROWS_PER_PAGE]
-        _draw_delegated_page(out[1 + i], manifest, page_tasks, theme)
+    for i, page_tasks in enumerate(delegated_pages):
+        _draw_delegated_page(out[1 + i], manifest, page_tasks, theme, is_last_page=(i == n_delegated - 1))
 
     meeting_start = 1 + n_delegated
     for i, title in enumerate(state.meetings):
@@ -330,4 +396,4 @@ def assemble(state: AgendaState, theme: Theme) -> bytes:
     pdf_bytes = out.tobytes()
     out.close()
 
-    return pdf_links.add_navigation_links(pdf_bytes, state)
+    return pdf_links.add_navigation_links(pdf_bytes, state, n_delegated)

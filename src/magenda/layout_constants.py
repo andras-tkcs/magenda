@@ -85,6 +85,11 @@ DELEGATED_ROWS_PER_PAGE = 8  # worst-case-calibrated estimate, see xml_ops.py hi
 DELEGATED_ROW_NUMBER_FONT_SIZE = 28
 DELEGATED_ROW_NUMBER_FAMILY_WEIGHT = "black"
 
+# Breathing room (points) kept between the last delegated-tasks row a page
+# can fit and the "Notes and updates" footer label below the table -- see
+# pdf_assembler._delegated_max_y.
+DELEGATED_TABLE_BOTTOM_GAP_PT = 6
+
 _THICK_BORDER_EIGHTH_PT = 24  # OOXML w:sz is in eighths of a point -> 3pt
 _THIN_BORDER_EIGHTH_PT = 4  # -> 0.5pt
 DELEGATED_THICK_BORDER_PT = _THICK_BORDER_EIGHTH_PT / 8

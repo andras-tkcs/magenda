@@ -35,13 +35,14 @@ def _insert_goto(page: pymupdf.Page, rect: pymupdf.Rect, target_page: int) -> No
     )
 
 
-def add_meeting_links(pdf: pymupdf.Document, state: AgendaState) -> None:
+def add_meeting_links(pdf: pymupdf.Document, state: AgendaState, delegated_page_count: int) -> None:
     """Add a GoTo link over each page-1 daily schedule entry that names a
     meeting (per AgendaState.match_schedule_to_meetings), jumping to that
     meeting's notes page. An entry is skipped, rather than guessed at, if
     its text isn't found on the rendered page exactly once (e.g. it also
     happens to appear elsewhere on page 1) or its target page doesn't exist
-    in the rendered PDF."""
+    in the rendered PDF. `delegated_page_count` is how many delegated-tasks
+    pages this render actually used -- see AgendaState.meeting_page_index."""
     pairs = state.match_schedule_to_meetings()
     if not pairs:
         return
@@ -50,7 +51,7 @@ def add_meeting_links(pdf: pymupdf.Document, state: AgendaState) -> None:
         hits = page0.search_for(text)
         if len(hits) != 1:
             continue
-        target_page = state.meeting_page_index(meeting_index)
+        target_page = state.meeting_page_index(meeting_index, delegated_page_count)
         if not (0 <= target_page < len(pdf)):
             continue
         _insert_goto(page0, hits[0], target_page)
@@ -77,12 +78,12 @@ def add_notes_links(pdf: pymupdf.Document) -> None:
             _insert_goto(page, hits[0], last_page)
 
 
-def add_navigation_links(pdf_bytes: bytes, state: AgendaState) -> bytes:
+def add_navigation_links(pdf_bytes: bytes, state: AgendaState, delegated_page_count: int) -> bytes:
     """Add every internal navigation link this module knows about to
     `pdf_bytes` and return the result."""
     pdf = pymupdf.open(stream=pdf_bytes, filetype="pdf")
     try:
-        add_meeting_links(pdf, state)
+        add_meeting_links(pdf, state, delegated_page_count)
         add_overview_links(pdf)
         add_notes_links(pdf)
         return pdf.tobytes()

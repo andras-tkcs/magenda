@@ -252,12 +252,6 @@ def add_delegated_tasks(state: "AgendaState", tasks: list[dict]) -> int:
     return len(new_tasks)
 
 
-def delegated_page_count(state: "AgendaState") -> int:
-    if not state.delegated_tasks:
-        return 0
-    return math.ceil(len(state.delegated_tasks) / LC.DELEGATED_ROWS_PER_PAGE)
-
-
 # --------------------------------------------------------------------------
 # AgendaState itself
 # --------------------------------------------------------------------------
@@ -279,11 +273,16 @@ class AgendaState:
     def create(cls, date: datetime.date) -> "AgendaState":
         return cls(date=date)
 
-    def meeting_page_index(self, meeting_index: int) -> int:
+    def meeting_page_index(self, meeting_index: int, delegated_page_count: int) -> int:
         """0-indexed final-PDF page number of meeting `meeting_index`:
         overview (0), then one page per delegated-tasks page, then one
-        page per meeting in order."""
-        return 1 + delegated_page_count(self) + meeting_index
+        page per meeting in order. `delegated_page_count` -- how many
+        delegated-tasks pages the render actually used -- has to come from
+        the caller: unlike everything else this state tracks, it depends
+        on the active theme (a row's height, and so how many fit per page,
+        varies with the font pack's line height -- see
+        pdf_assembler._plan_delegated_pages), not on the state alone."""
+        return 1 + delegated_page_count + meeting_index
 
     def read_daily_schedule_entries(self) -> list[str]:
         """Text of every filled schedule slot, in row (hour, half) order."""
