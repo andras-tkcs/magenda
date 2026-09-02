@@ -1,0 +1,39 @@
+name: Tests
+
+on:
+  pull_request:
+    branches: ['**']
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: pytest (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      # No LibreOffice needed here any more: rendering is pure Python at
+      # runtime (see docs/design/remove-libreoffice-runtime-dependency.md).
+      # `.[dev]` pulls in lxml, needed only by tests/compiler/ (the
+      # template-compiler's own OOXML-editing code, scripts/compiler/).
+      - name: Install Python dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Run tests
+        run: pytest -v

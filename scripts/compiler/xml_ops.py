@@ -701,7 +701,11 @@ DELEGATED_BULLET_PREFIX = "• "  # bullet + a thin space, for a minimal bulle
 # case -- every column (task, owner, 2-line status) wrapping to its widest
 # plausible content -- so it stays safe even when a page's tasks happen to
 # be unusually verbose, at the cost of some unused room on a page of short
-# one-line tasks.
+# one-line tasks. A status column with an unusually long entry (each "\n"-
+# separated entry now word-wraps rather than truncating -- see
+# _set_status_cell) can still grow past this estimate; the header row
+# repeating on overflow (w:trPr/w:tblHeader, see _build_delegated_table_shell)
+# keeps that merely un-optimal rather than broken.
 DELEGATED_ROWS_PER_PAGE = 8
 
 _THICK_BORDER_SZ = 24
@@ -1084,17 +1088,30 @@ def _set_owner_cell(tc: etree._Element, owner: str) -> None:
 
 
 def _set_status_cell(tc: etree._Element, status: str) -> None:
-    lines = [line.strip() for line in status.split("\n") if line.strip()] if status else []
-    if not lines:
+    """Render `status` as a bullet list, one bullet per "\\n"-separated
+    entry. An entry too wide for the column word-wraps across as many
+    physical lines as it needs (like the task/cadence column) rather than
+    being truncated -- only its first physical line carries the bullet, so
+    read_delegated_tasks can tell a wrapped continuation (no bullet) apart
+    from the next entry (bullet) and rejoin it on read-back."""
+    entries = [line.strip() for line in status.split("\n") if line.strip()] if status else []
+    if not entries:
         return
     family, size = cell_run_font(tc)
     bullet_width = text_width_twips(DELEGATED_BULLET_PREFIX, family=family, size_half_points=size)
     width = cell_text_width_twips(tc) - bullet_width
-    fitted = [
-        fit_single_line(line, family=family, size_half_points=size, max_width_twips=width)
-        for line in lines
-    ]
-    set_cell_text_lines(tc, [f"{DELEGATED_BULLET_PREFIX}{line}" for line in fitted])
+    lines: list[str] = []
+    for entry in entries:
+        wrapped, _ = fit_downsize_or_wrap(
+            entry,
+            family=family,
+            max_size_half_points=size,
+            min_size_half_points=size,
+            max_width_twips=width,
+        )
+        lines.append(f"{DELEGATED_BULLET_PREFIX}{wrapped[0]}")
+        lines.extend(wrapped[1:])
+    set_cell_text_lines(tc, lines)
 
 
 def _fill_delegated_row(tr: etree._Element, task: dict) -> None:
@@ -1149,11 +1166,20 @@ def read_delegated_tasks(body: etree._Element) -> list[dict]:
             )
             text = " ".join(lines[1:]).strip()
 
-            status_lines = [
-                line[len(DELEGATED_BULLET_PREFIX):] if line.startswith(DELEGATED_BULLET_PREFIX) else line
-                for line in _paragraph_lines(cells[3].find("w:p", NS))
-                if line.strip()
-            ]
+            # Each bullet's own text starts a new entry; a physical line
+            # without the bullet prefix is a word-wrapped continuation of
+            # the entry above it (see _set_status_cell) and gets rejoined
+            # with a space rather than read back as a separate "\n" entry.
+            status_lines: list[str] = []
+            for line in _paragraph_lines(cells[3].find("w:p", NS)):
+                if not line.strip():
+                    continue
+                if line.startswith(DELEGATED_BULLET_PREFIX):
+                    status_lines.append(line[len(DELEGATED_BULLET_PREFIX):])
+                elif status_lines:
+                    status_lines[-1] = f"{status_lines[-1]} {line}"
+                else:
+                    status_lines.append(line)
 
             tasks.append(
                 {

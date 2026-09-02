@@ -377,6 +377,32 @@ def test_status_multiline_becomes_one_bullet_per_line_and_roundtrips():
     assert readback[0]["status"] == "Draft sent\nWaiting on finance\nDue Friday"
 
 
+def test_status_long_entry_wraps_instead_of_truncating_and_roundtrips():
+    long_entry = (
+        "Waiting on finance approval which is taking longer than expected "
+        "due to end of quarter reviews"
+    )
+    status = f"Draft sent\n{long_entry}\nDue Friday"
+    doc = fresh_doc()
+    xml_ops.rebuild_delegated_tasks(doc.body, [_task("A", status=status)])
+    table = xml_ops.find_delegated_tables(doc.body)[0]
+    status_cell = table.findall("w:tr", xml_ops.NS)[1].findall("w:tc", xml_ops.NS)[3]
+    lines = xml_ops._paragraph_lines(status_cell.find("w:p", xml_ops.NS))
+
+    # The long middle entry wraps across more than one physical line; only
+    # its first physical line carries the bullet, so it counts as one entry
+    # rather than several.
+    assert lines[0] == f"{xml_ops.DELEGATED_BULLET_PREFIX}Draft sent"
+    assert lines[-1] == f"{xml_ops.DELEGATED_BULLET_PREFIX}Due Friday"
+    middle = lines[1:-1]
+    assert len(middle) > 1
+    assert middle[0].startswith(xml_ops.DELEGATED_BULLET_PREFIX)
+    assert not any(line.startswith(xml_ops.DELEGATED_BULLET_PREFIX) for line in middle[1:])
+
+    readback = xml_ops.read_delegated_tasks(doc.body)
+    assert readback[0]["status"] == status
+
+
 def test_delegated_tasks_marked_rows_shaded_unmarked_not():
     doc = fresh_doc()
     xml_ops.rebuild_delegated_tasks(doc.body, [_task("Marked", marked=True), _task("Plain", marked=False)])
