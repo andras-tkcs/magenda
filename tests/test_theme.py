@@ -68,11 +68,11 @@ def test_apply_font_pack_swaps_all_five_outfit_weights():
 def test_apply_font_pack_leaves_non_outfit_fonts_untouched():
     tree = fresh_tree()
     before = _rfonts_ascii_values(tree)
-    assert "Wingdings" in before  # delegated-tasks checkbox glyph
+    assert "JetBrains Mono" in before  # to-do list checkbox glyph
 
     theme.apply_font_pack(tree, "roboto")
     after = _rfonts_ascii_values(tree)
-    assert "Wingdings" in after
+    assert "JetBrains Mono" in after
 
 
 def test_apply_font_pack_unknown_pack_raises():
