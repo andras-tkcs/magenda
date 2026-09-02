@@ -112,6 +112,37 @@ _REAL_NOTES = xml_ops.NOTES_LINK_LABEL
 _REAL_TODO_LABEL = "TO-DO LIST"
 _REAL_SCHEDULE_LABEL = "DAILY SCHEDULE"
 
+# Redacting with a plain white fill (pymupdf's add_redact_annot default)
+# leaves a visible white patch wherever the underlying cell is actually
+# shaded -- the calendar header's weekday-name/day-number row (word/
+# header1.xml, w:shd fill="E6E6E6") and the "TO-DO LIST"/"DAILY SCHEDULE"/
+# delegated-column-header cells (fill="D9D9D9") all are. Every redaction
+# below picks the fill that matches what's actually behind the text it's
+# removing, transcribed by hand from the template's own w:shd values.
+WHITE = (1, 1, 1)
+_GRAY_E6 = tuple(int(h, 16) / 255 for h in ("e6", "e6", "e6"))
+_GRAY_D9 = tuple(int(h, 16) / 255 for h in ("d9", "d9", "d9"))
+
+# slot id (exact, or dotted-prefix) -> its cell's real background fill.
+_SLOT_BG_FILL = {
+    "header.weekday_label.": _GRAY_E6,
+    "header.dayno.": _GRAY_E6,
+    "header.overview_label": _GRAY_E6,
+    "header.notes_label": _GRAY_E6,
+    "todo.label": _GRAY_D9,
+    "schedule.label": _GRAY_D9,
+    "delegated.header.task": _GRAY_D9,
+    "delegated.header.owner": _GRAY_D9,
+    "delegated.header.status": _GRAY_D9,
+}
+
+
+def _bg_fill(slot_id: str) -> tuple:
+    for key, fill in _SLOT_BG_FILL.items():
+        if slot_id == key or (key.endswith(".") and slot_id.startswith(key)):
+            return fill
+    return WHITE
+
 
 def _real_text_rect(page: pymupdf.Page, text: str) -> pymupdf.Rect:
     hits = page.search_for(text)
@@ -121,35 +152,94 @@ def _real_text_rect(page: pymupdf.Page, text: str) -> pymupdf.Rect:
 
 
 def _header_redact_rects(page: pymupdf.Page, header_slots: list) -> list:
-    """Rects to blank `page`'s (real, untouched) header content with,
-    combining reused sentinel-derived rects (same-width fields) with
-    freshly re-searched real-text rects (variable-width fields) -- see
-    the module comment above."""
+    """(rect, fill) pairs to blank `page`'s (real, untouched) header
+    content with, combining reused sentinel-derived rects (same-width
+    fields) with freshly re-searched real-text rects (variable-width
+    fields) -- see the module comment above."""
     by_id = {s.id: s.rect for s in header_slots}
-    rects = [
-        rect for slot_id, rect in by_id.items()
+    pairs = [
+        (rect, _bg_fill(slot_id)) for slot_id, rect in by_id.items()
         if slot_id in ("header.cw",) or slot_id.startswith("header.weekday_label.") or slot_id.startswith("header.dayno.")
     ]
-    rects.append(_real_text_rect(page, _REAL_HEADING))
-    rects.append(_real_text_rect(page, _REAL_MONTH))
-    rects.append(_real_text_rect(page, _REAL_YEAR))
-    rects.append(_real_text_rect(page, _REAL_OVERVIEW))
-    rects.append(_real_text_rect(page, _REAL_NOTES))
-    return rects
+    pairs.append((_real_text_rect(page, _REAL_HEADING), WHITE))
+    pairs.append((_real_text_rect(page, _REAL_MONTH), WHITE))
+    pairs.append((_real_text_rect(page, _REAL_YEAR), WHITE))
+    pairs.append((_real_text_rect(page, _REAL_OVERVIEW), _GRAY_E6))
+    pairs.append((_real_text_rect(page, _REAL_NOTES), _GRAY_E6))
+    return pairs
 
 
-def _redact_rects(page: pymupdf.Page, rects) -> None:
+def _redact_rects(page: pymupdf.Page, rects, fill: tuple = WHITE) -> None:
     """Blank every rect in `rects` on `page` (text only, chrome around it
     untouched) -- used to strip content whose geometry was already
     captured on a *different* render of this same fixed page layout (see
     build_header_fixture's docstring: only one fixture can own the narrow-
     cell token budget at a time, so every other fixture's chrome page still
     carries this fixture's own real, unredacted header/n4w/todo/schedule
-    content and needs it blanked by rect instead of by a fresh search)."""
-    for rect in rects:
-        page.add_redact_annot(pymupdf.Rect(rect), fill=(1, 1, 1))
-    if rects:
-        page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE)
+    content and needs it blanked by rect instead of by a fresh search).
+    `rects` is either a flat list of rects (all filled with `fill`) or a
+    list of (rect, fill) pairs (each filled with its own).
+
+    Every one of these slots sits close enough to a shaded row's own ruled
+    border that a naive redact-and-repaint visibly damages it -- see
+    _restore_borders_near, which every caller of this function is expected
+    to run afterward over the same region. That split (redact+repaint
+    here, border restoration as a separate explicit step) is deliberate:
+    this function has no reliable way to know which borders "belong" to
+    which rect, so it always may cover them a little, and the caller
+    -- which knows the row/page layout -- puts them back."""
+    items = [item if isinstance(item, tuple) else (item, fill) for item in rects]
+    if not items:
+        return
+    # Redact with plain white; apply_redactions with graphics=NONE so a
+    # rect sitting right against a vector border doesn't clip it (the
+    # default, REMOVE_IF_COVERED, clips any path it merely intersects, not
+    # just ones it fully covers).
+    for rect, _ in items:
+        page.add_redact_annot(pymupdf.Rect(rect), fill=WHITE)
+    page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE, graphics=pymupdf.PDF_REDACT_LINE_ART_NONE)
+    # Non-white backgrounds are painted back in as a second, separate step
+    # (add_redact_annot's own fill also draws a same-color stroke around
+    # the rect, and its corner/edge antialiasing doesn't blend seamlessly
+    # with a plain draw_rect fill of the same color placed right next to
+    # it -- painting fill-only, no stroke, directly over the redacted area
+    # avoids that). Outset a little so this fill's own edge lands inside
+    # the surrounding same-color region rather than exactly on the
+    # redaction's edge -- gray blended with gray disappears; gray blended
+    # with the white underneath doesn't. This routinely bleeds into a
+    # nearby ruled border's own stroke width (most of these rects sit
+    # within a point or two of one) -- expected, left for
+    # _restore_borders_near to fix up afterward, not worked around here.
+    _BLEED = 2.0
+    for rect, item_fill in items:
+        if item_fill != WHITE:
+            r0 = pymupdf.Rect(rect)
+            r = pymupdf.Rect(r0.x0 - _BLEED, r0.y0 - _BLEED, r0.x1 + _BLEED, r0.y1 + _BLEED)
+            page.draw_rect(r, color=None, fill=item_fill)
+
+
+def _restore_borders_near(page: pymupdf.Page, y0: float, y1: float) -> None:
+    """Redraw every wide horizontal ruled line whose y falls in [y0, y1]
+    (queried fresh from the page's own vector content, not hardcoded) as
+    the topmost content on the page. A stroke has thickness -- the
+    template's ruled borders are 3pt wide -- so a label sitting close to
+    one, as most do, has its capture rect overlapping the stroke's own
+    width, not just the hairline path down its center; the redact/repaint
+    _redact_rects does for that label then visibly eats into the border
+    wherever they overlap, however small the redacted rect. Restoring the
+    exact same strokes on top afterward is simpler and more robust than
+    trying to keep every label's geometry clear of every border it might
+    be near."""
+    for d in page.get_drawings():
+        if d["type"] != "s":
+            continue
+        r = d["rect"]
+        if r.height > 0.5 or r.width < 50:
+            continue  # not a wide horizontal ruled line
+        if not (y0 <= r.y0 <= y1):
+            continue
+        page.draw_line((r.x0, r.y0), (r.x1, r.y1), color=d.get("color") or (0, 0, 0),
+                        width=d.get("width") or 1)
 
 
 def render_to_pdf(doc: AgendaDocument, soffice: str, tmp: Path, name: str) -> pymupdf.Document:
@@ -202,10 +292,11 @@ class SlotCollector:
     def resolve(self, page: pymupdf.Page) -> list[Slot]:
         """For every registered sentinel found on `page`: capture its rect,
         redact it (blanking the glyphs but keeping surrounding chrome),
-        and return the finished Slot list. Applies all redactions in one
-        batch at the end (pymupdf requires apply_redactions after adding
-        every annotation on a page)."""
+        and return the finished Slot list. Redaction itself is one batched
+        call via _redact_rects (see its docstring for why a non-white fill
+        goes through a second, separate paint step there)."""
         slots = []
+        pairs = []
         for sentinel, meta in self._pending.items():
             hits = page.search_for(sentinel)
             if len(hits) != 1:
@@ -215,8 +306,8 @@ class SlotCollector:
             slots.append(Slot(id=meta["id"], rect=(rect.x0, rect.y0, rect.x1, rect.y1), role=meta["role"],
                                weight=meta["weight"], size_half_points=meta["size_half_points"],
                                align=meta["align"], text=meta["text"]))
-            page.add_redact_annot(rect, fill=(1, 1, 1))
-        page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE)
+            pairs.append((rect, _bg_fill(meta["id"])))
+        _redact_rects(page, pairs)
         return slots
 
 
@@ -349,6 +440,14 @@ def build_todo_schedule_fixture(sc: SlotCollector) -> AgendaDocument:
         xml_ops.set_cell_text(cells[2], d_tok)
         sc.register(t_tok, id=f"todo.row.{i}.task", role="body", weight="thin", size_half_points=24)
         sc.register(d_tok, id=f"todo.row.{i}.due", role="body", weight="thin", size_half_points=24)
+    # The checkbox column (cells[0] of every body row) is deliberately left
+    # untouched here -- see main()'s checkbox handling for why (a Wingdings-
+    # encoded glyph nothing guarantees is actually installed on whichever
+    # machine runs this compiler) and how its rect is derived without
+    # needing a sentinel of its own (from the task cell captured above,
+    # arithmetically, rather than risking a 3rd token per row overflowing
+    # this already-narrow column and throwing off page geometry the way an
+    # earlier version of this function did).
 
     schedule_table = xml_ops.find_schedule_table(body)
     for i, row in enumerate(schedule_table.findall("w:tr", xml_ops.NS)):
@@ -486,7 +585,7 @@ def main() -> None:
             Slot(id="header.notes_label", rect=tuple(notes_rect), role="body", weight="regular",
                  size_half_points=16, text=_REAL_NOTES),
         ]
-        _redact_rects(header_pdf[0], [overview_rect, notes_rect])
+        _redact_rects(header_pdf[0], [(overview_rect, _GRAY_E6), (notes_rect, _GRAY_E6)])
 
         sc_todo_schedule = SlotCollector()
         todo_schedule_doc = build_todo_schedule_fixture(sc_todo_schedule)
@@ -500,12 +599,44 @@ def main() -> None:
         # own content affects the other's geometry, the todo/schedule
         # rects captured there apply unchanged here too: redact them
         # directly by rect rather than re-searching.
-        todo_schedule_redact_rects = [
-            s.rect for s in todo_schedule_slots if s.id not in ("todo.label", "schedule.label")
+        todo_schedule_redact_pairs = [
+            (s.rect, _bg_fill(s.id)) for s in todo_schedule_slots if s.id not in ("todo.label", "schedule.label")
         ]
-        todo_schedule_redact_rects.append(_real_text_rect(header_pdf[0], _REAL_TODO_LABEL))
-        todo_schedule_redact_rects.append(_real_text_rect(header_pdf[0], _REAL_SCHEDULE_LABEL))
-        _redact_rects(header_pdf[0], todo_schedule_redact_rects)
+        todo_schedule_redact_pairs.append((_real_text_rect(header_pdf[0], _REAL_TODO_LABEL), _GRAY_D9))
+        todo_schedule_redact_pairs.append((_real_text_rect(header_pdf[0], _REAL_SCHEDULE_LABEL), _GRAY_D9))
+
+        # The 18 checkbox-column cells are real, untouched content on this
+        # page (build_todo_schedule_fixture never sentinel-replaces them --
+        # see its comment) -- their own literal Wingdings-encoded character
+        # (U+00A1), found by search_for like any other real-text redaction
+        # here, just with every hit wanted rather than exactly one.
+        checkbox_hits = header_pdf[0].search_for("¡")
+        if len(checkbox_hits) != LC.TODO_ROW_CAPACITY:
+            raise SystemExit(f"expected {LC.TODO_ROW_CAPACITY} checkbox glyphs, found {len(checkbox_hits)}")
+        todo_schedule_redact_pairs += [(hit, WHITE) for hit in checkbox_hits]
+        _redact_rects(header_pdf[0], todo_schedule_redact_pairs)
+        # Covers both the calendar header band's own borders (y=38/71) and
+        # the "TO-DO LIST"/"DAILY SCHEDULE" label boxes' (y=87-113) -- see
+        # _redact_rects/_restore_borders_near's docstrings for why this is
+        # a separate, later step rather than something _redact_rects
+        # itself avoids needing.
+        _restore_borders_near(header_pdf[0], 30, 120)
+
+        # Vector-drawn checkboxes, not text: nothing guarantees Wingdings --
+        # or any specific symbol font -- is installed on whichever machine
+        # happens to run this compiler (it wasn't, developing this
+        # script -- LibreOffice silently substituted a fallback font, so
+        # the glyph just redacted above rendered as "¡", not a checkbox).
+        # A plain square outline, baked into chrome.pdf as chrome (never
+        # touched at runtime, same as the ruled lines it sits next to),
+        # renders identically everywhere by construction instead of
+        # gambling on a font substitution nobody controls.
+        for hit in checkbox_hits:
+            size = min(hit.width, hit.height) * 0.9
+            cx, cy = hit.x0 + hit.width / 2, (hit.y0 + hit.y1) / 2
+            box = pymupdf.Rect(cx - size / 2, cy - size / 2, cx + size / 2, cy + size / 2)
+            header_pdf[0].draw_rect(box, color=(0, 0, 0), fill=None, width=0.75)
+
         overview_pdf = header_pdf
         overview_page_slots = n4w_slots + todo_schedule_slots
 
@@ -531,6 +662,7 @@ def main() -> None:
                                   text=LC.MEETING_TITLE_PREFIX.rstrip()))
         _redact_rects(meeting_pdf[1], [meeting_label_rect])
         _redact_rects(meeting_pdf[1], _header_redact_rects(meeting_pdf[1], header_slots))
+        _restore_borders_near(meeting_pdf[1], 30, 120)
 
         sc_notes = SlotCollector()
         notes_doc = build_further_notes_fixture(sc_notes)
@@ -538,6 +670,7 @@ def main() -> None:
         notes_page = notes_pdf[len(notes_pdf) - 1]
         notes_slots = sc_notes.resolve(notes_page)
         _redact_rects(notes_page, _header_redact_rects(notes_page, header_slots))
+        _restore_borders_near(notes_page, 30, 120)
 
         sc_delegated = SlotCollector()
         delegated_doc = build_delegated_fixture(sc_delegated)
@@ -546,6 +679,7 @@ def main() -> None:
         # calibration rows fit on one page), 2=blank meeting slot, 3=closing.
         delegated_page = delegated_pdf[1]
         all_delegated_slots = sc_delegated.resolve(delegated_page)
+        _restore_borders_near(delegated_page, 100, 135)  # the delegated table's own header-row borders
         delegated_header_slots = [s for s in all_delegated_slots if not s.id.startswith("_calib.")]
         calib = {s.id: s for s in all_delegated_slots if s.id.startswith("_calib.")}
         # The header labels are center-aligned within their own cell (see
@@ -575,6 +709,7 @@ def main() -> None:
             row0_top - _ROW_SPACING_BEFORE_PT,
         )
         _redact_rects(delegated_page, _header_redact_rects(delegated_page, header_slots))
+        _restore_borders_near(delegated_page, 30, 120)  # the calendar header band's own borders
         # The two calibration rows themselves (row number, "x" task text,
         # and their borders/shading) must not survive into chrome -- actual
         # body rows are drawn procedurally at runtime (pdf_assembler.py),
