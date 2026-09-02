@@ -81,8 +81,10 @@ def apply_font_pack(tree: etree._ElementTree, pack_id: str) -> None:
     """Rewrite every w:rFonts reference to one of the template's 5 Outfit
     weight names to `pack_id`'s matching-weight family name, in place on
     `tree`. Leaves everything else untouched — w:cs complex-script
-    fallbacks, Wingdings (used for the delegated-tasks checkbox glyph), and
-    any family name that isn't one of the 5 known Outfit weights.
+    fallbacks, the fixed JetBrains Mono run used for the to-do list's
+    checkbox glyph (see assets/template.docx and font_setup — kept constant
+    across every pack so the glyph never depends on which pack is active),
+    and any family name that isn't one of the 5 known Outfit weights.
 
     If the pack declares a `size_scale` (see font_packs.py — for a face
     measurably wider than Outfit at matching weight, e.g. a monospace pack),
