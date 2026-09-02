@@ -1,21 +1,16 @@
-from magenda import agenda_store, calendar_math, xml_ops
+from magenda import agenda_store
 from magenda.tools._common import parse_date
 
 
 def adjust_dates(date: str) -> dict:
-    """Regenerate the calendar header block (in the document's Word header —
-    see xml_ops.find_calendar_block, applied to every page automatically)
-    and the 'NEXT FOUR WEEKS' grid on page 1, for the agenda already on disk
-    for `date`."""
+    """Confirms the calendar header block and 'NEXT FOUR WEEKS' grid for
+    `date`'s agenda are in sync. There's nothing to actually recompute any
+    more: both are derived live from the agenda's own date at render time
+    (see pdf_assembler._draw_header/_draw_overview), never stored, so they
+    can't go stale between calls the way the pre-rewrite docx-based
+    implementation's baked-in copies could. Kept as a tool mainly so
+    existing callers/tests that call it after other edits keep working;
+    it just confirms the agenda exists."""
     d = parse_date(date)
-    doc = agenda_store.load(d)
-    body = doc.body
-
-    fields = calendar_math.header_fields(d)
-    xml_ops.apply_calendar_block(xml_ops.find_calendar_block(doc.header), fields)
-
-    n4w_table = xml_ops.find_next_four_weeks_table(body)
-    xml_ops.apply_next_four_weeks(n4w_table, calendar_math.next_four_weeks(d))
-
-    agenda_store.save(d, doc)
+    agenda_store.load(d)
     return {"date": d.isoformat(), "calendar_blocks_updated": 1}

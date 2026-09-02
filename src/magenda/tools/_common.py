@@ -1,6 +1,6 @@
 import datetime
 
-from magenda.xml_ops import MagendaError
+from magenda.errors import MagendaError
 
 
 def parse_date(date: str) -> datetime.date:

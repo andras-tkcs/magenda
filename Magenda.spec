@@ -16,9 +16,12 @@
 #     Claude launches the executable directly as an MCP subprocess, never via
 #     Finder/Launch Services, so app-bundle chrome (Info.plist, icon, etc.)
 #     isn't needed.
-#   - LibreOffice ('soffice') is NOT bundled — it's a separate, large,
-#     independently-licensed app. Users install it themselves
-#     (`brew install --cask libreoffice`); render_pdf looks it up at runtime.
+#   - No external app dependency at all: rendering is pure Python
+#     (pymupdf + the bundled fonts, see src/magenda/pdf_assembler.py) against
+#     the compiled template (assets/compiled/, produced once by
+#     scripts/compile_template.py -- see docs/design/remove-libreoffice-
+#     runtime-dependency.md). assets/template.docx itself is the human-
+#     editable design source and isn't bundled -- the runtime never reads it.
 
 import sys
 from pathlib import Path
@@ -28,7 +31,7 @@ SRC = str(Path("src").resolve())
 sys.path.insert(0, SRC)
 
 datas = [
-    ("assets/template.docx", "assets"),
+    ("assets/compiled", "assets/compiled"),
     ("assets/fonts", "assets/fonts"),
     *collect_data_files("mcp"),
     *copy_metadata("mcp"),
@@ -37,8 +40,7 @@ datas = [
 hidden_imports = [
     "mcp",
     "mcp.server.fastmcp",
-    "lxml.etree",
-    "lxml._elementpath",
+    "pymupdf",
     "pydantic",
     "pydantic_core",
     "PIL",

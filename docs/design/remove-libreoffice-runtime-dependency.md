@@ -1,7 +1,10 @@
 # Design: remove the LibreOffice runtime dependency
 
-Status: **design only — not implemented**. This document describes a
-proposed architecture; no production code changes accompany it.
+Status: **implemented** (see the `claude/libreoffice-removal-design-0rlok1`
+branch history following this document's initial commit). The sections
+below are kept as the original design record; where the implementation
+diverged in a detail (e.g. the compiled bundle's exact geometry-capture
+mechanics), the code and its own comments are authoritative.
 
 ## 1. Problem
 

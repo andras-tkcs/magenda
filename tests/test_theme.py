@@ -1,43 +1,7 @@
-import shutil
-
 import pytest
 
-from magenda import agenda_store, config, theme
+from magenda import config, theme
 from magenda.theme import Theme
-from magenda.xml_ops import NS, MagendaError, qn
-
-
-def _rfonts_ascii_values(tree) -> set[str]:
-    values = set()
-    for rfonts in tree.iter(qn("w:rFonts")):
-        val = rfonts.get(qn("w:ascii"))
-        if val:
-            values.add(val)
-    return values
-
-
-def _color_values(tree) -> set[str]:
-    values = set()
-    for color_el in tree.iter(qn("w:color")):
-        val = color_el.get(qn("w:val"))
-        if val:
-            values.add(val.upper())
-    return values
-
-
-def _color_values_across(trees) -> set[str]:
-    values: set[str] = set()
-    for tree in trees:
-        values |= _color_values(tree)
-    return values
-
-
-def fresh_doc():
-    return agenda_store.AgendaDocument.load(agenda_store.TEMPLATE_PATH)
-
-
-def fresh_tree():
-    return fresh_doc().tree
 
 
 def test_theme_defaults_match_template():
@@ -50,108 +14,44 @@ def test_theme_defaults_match_template():
     assert t.notes_color == "00B0F0"
 
 
-def test_apply_font_pack_swaps_all_five_outfit_weights():
-    tree = fresh_tree()
-    before = _rfonts_ascii_values(tree)
-    assert "Outfit Black" in before
-    assert "Outfit Thin" in before
-
-    theme.apply_font_pack(tree, "roboto")
-    after = _rfonts_ascii_values(tree)
-
-    assert not any(name.startswith("Outfit") for name in after)
-    assert "Roboto Black" in after
-    assert "Roboto Thin" in after
-    assert "Roboto" in after
+def test_role_color_maps_each_role_to_its_theme_field():
+    t = Theme(weekend_color="111111", heading_color="222222", label_color="333333",
+              accent_color="444444", notes_color="555555")
+    assert theme.role_color(t, "weekend") == "111111"
+    assert theme.role_color(t, "heading") == "222222"
+    assert theme.role_color(t, "label") == "333333"
+    assert theme.role_color(t, "accent") == "444444"
+    assert theme.role_color(t, "notes") == "555555"
 
 
-def test_apply_font_pack_leaves_non_outfit_fonts_untouched():
-    tree = fresh_tree()
-    before = _rfonts_ascii_values(tree)
-    assert "Wingdings" in before  # delegated-tasks checkbox glyph
-
-    theme.apply_font_pack(tree, "roboto")
-    after = _rfonts_ascii_values(tree)
-    assert "Wingdings" in after
+def test_role_color_body_is_always_black_regardless_of_theme():
+    t = Theme(weekend_color="111111", heading_color="222222", label_color="333333",
+              accent_color="444444", notes_color="555555")
+    assert theme.role_color(t, "body") == theme.BODY_COLOR == "000000"
 
 
-def test_apply_font_pack_unknown_pack_raises():
-    tree = fresh_tree()
+def test_role_font_file_resolves_every_weight_bucket():
+    t = Theme(font_pack="roboto")
+    for weight in ("thin", "extralight", "regular", "semibold", "black"):
+        path = theme.role_font_file(t, weight)
+        assert path.exists()
+        assert "Roboto" in path.name
+
+
+def test_role_font_file_unknown_pack_raises():
+    from magenda.errors import MagendaError
+
+    t = Theme(font_pack="comic-sans")
     with pytest.raises(MagendaError):
-        theme.apply_font_pack(tree, "comic-sans")
+        theme.role_font_file(t, "regular")
 
 
-def test_apply_font_pack_size_scale_shrinks_only_swapped_runs():
-    tree = fresh_tree()
-    sizes_before = {
-        el.get(qn("w:val"))
-        for el in tree.iter(qn("w:sz"))
-    }
-    theme.apply_font_pack(tree, "jetbrains_mono")  # size_scale = 0.9
-    sizes_after = {el.get(qn("w:val")) for el in tree.iter(qn("w:sz"))}
-    assert sizes_after != sizes_before
+def test_role_size_scale_default_pack_is_a_no_op():
+    assert theme.role_size_scale(Theme()) == 1.0
 
 
-def test_apply_colors_swaps_the_known_accents_present_in_one_part():
-    # document.xml's own body carries 4 of the 5 known accents (weekend,
-    # label, accent, notes) -- the heading color lives only in the Word
-    # header part (word/header1.xml), which apply_colors doesn't reach on
-    # its own; see test_apply_theme_to_document_covers_every_part below for
-    # the header/footer parts too.
-    tree = fresh_tree()
-    before = _color_values(tree)
-    assert {"EE0000", "BF4E14", "3A7C22", "00B0F0"} <= before
-
-    custom = Theme(weekend_color="111111", heading_color="222222", label_color="333333", accent_color="444444", notes_color="555555")
-    theme.apply_colors(tree, custom)
-    after = _color_values(tree)
-
-    assert not ({"EE0000", "BF4E14", "3A7C22", "00B0F0"} & after)
-    assert {"111111", "333333", "444444", "555555"} <= after
-
-
-def test_apply_colors_leaves_unrelated_colors_untouched():
-    # Any w:color that isn't one of the 5 known constants must survive
-    # unchanged. F95738 is one such leftover: the template's own shipped
-    # sample delegated-tasks rows (dropped by create_agenda, never part of
-    # a rebuilt page -- see xml_ops._delegated_body_rpr, which colors
-    # *generated* rows plain black instead) bake it into their
-    # paragraph-mark formatting, and it isn't one of the 5 themed roles.
-    tree = fresh_tree()
-    before = _color_values(tree)
-    assert "F95738" in before
-    theme.apply_colors(tree, Theme())  # defaults == template's own values
-    after = _color_values(tree)
-    assert before == after
-
-
-def test_apply_theme_is_font_and_color_together():
-    tree = fresh_tree()
-    custom = Theme(font_pack="roboto", weekend_color="ABCDEF")
-    theme.apply_theme(tree, custom)
-    assert "Roboto Black" in _rfonts_ascii_values(tree)
-    assert "ABCDEF" in _color_values(tree)
-
-
-def test_apply_theme_to_document_covers_every_part():
-    """The calendar heading color lives only in the header part, and the
-    "Notes and updates" footer heading only in footer1.xml -- a themed
-    render has to reach all of them, not just document.xml's body."""
-    doc = fresh_doc()
-    all_before = _color_values_across(doc.themable_trees())
-    assert {"EE0000", "215E99", "BF4E14", "3A7C22", "00B0F0"} <= all_before
-
-    custom = Theme(
-        weekend_color="111111",
-        heading_color="222222",
-        label_color="333333",
-        accent_color="444444",
-        notes_color="555555",
-    )
-    theme.apply_theme_to_document(doc, custom)
-    all_after = _color_values_across(doc.themable_trees())
-    assert not ({"EE0000", "215E99", "BF4E14", "3A7C22", "00B0F0"} & all_after)
-    assert {"111111", "222222", "333333", "444444", "555555"} <= all_after
+def test_role_size_scale_jetbrains_mono_shrinks():
+    assert theme.role_size_scale(Theme(font_pack="jetbrains_mono")) == pytest.approx(0.9)
 
 
 # -- config.py -------------------------------------------------------------
@@ -188,16 +88,13 @@ def test_theme_from_env_invalid_values_fall_back(monkeypatch):
     assert t.weekend_color == "EE0000"
 
 
-# -- end-to-end: the real render_pdf tool applies the active theme --------
-# (module-level pytestmark would skip every test above too, not just these
-# two -- so it's a per-test decorator here instead)
-
-_needs_soffice = pytest.mark.skipif(shutil.which("soffice") is None, reason="LibreOffice not installed")
+# -- end-to-end: render_pdf applies the active theme, pure Python ----------
+# (no LibreOffice needed any more -- pdf_assembler.py is the whole render
+# path, so unlike before the rewrite these tests need no skip marker.)
 
 
-@_needs_soffice
-def test_render_pdf_applies_active_theme(tmp_path, monkeypatch):
-    import fitz
+def test_render_pdf_applies_active_theme(monkeypatch):
+    import pymupdf
 
     from magenda import tools
 
@@ -205,8 +102,9 @@ def test_render_pdf_applies_active_theme(tmp_path, monkeypatch):
 
     date = "2026-08-14"
     tools.create_agenda(date)
-    result = tools.render_pdf(date, output_dir=str(tmp_path))
-    doc = fitz.open(result["path"])
+    result = tools.render_pdf(date)
+    import base64
+    doc = pymupdf.open(stream=base64.b64decode(result["pdf_base64"]), filetype="pdf")
 
     found_label = False
     for block in doc[0].get_text("dict")["blocks"]:
@@ -219,19 +117,25 @@ def test_render_pdf_applies_active_theme(tmp_path, monkeypatch):
     assert found_label
 
 
-@_needs_soffice
-def test_render_pdf_never_mutates_shared_working_doc(tmp_path, monkeypatch):
-    """theme.apply_theme_to_document must run on a clone -- a themed render
-    must not leave the in-memory working document (which every later tool
-    call reads) with renamed fonts."""
-    from magenda import tools
+def test_render_pdf_never_mutates_shared_working_state(monkeypatch):
+    """Theming is resolved purely at draw time from the active Theme --
+    there's no in-memory working document for it to mutate any more, but
+    the same guarantee (a themed render doesn't change what later tool
+    calls for this date see) still needs to hold: re-rendering under a
+    different theme must reproduce identical text content."""
+    from magenda import agenda_store, tools
 
     monkeypatch.setattr(config, "get_active_theme", lambda: Theme(font_pack="roboto"))
 
     date = "2026-08-15"
     tools.create_agenda(date)
-    tools.render_pdf(date, output_dir=str(tmp_path))
+    tools.render_pdf(date)
 
-    live_doc = agenda_store.load(__import__("datetime").date.fromisoformat(date))
-    assert "Outfit Black" in _rfonts_ascii_values(live_doc.tree)
-    assert not any(name.startswith("Roboto") for name in _rfonts_ascii_values(live_doc.tree))
+    import datetime
+    state_before = agenda_store.load(datetime.date.fromisoformat(date))
+    assert state_before.meetings == [""]
+
+    monkeypatch.setattr(config, "get_active_theme", lambda: Theme())
+    tools.render_pdf(date)
+    state_after = agenda_store.load(datetime.date.fromisoformat(date))
+    assert state_after.meetings == [""]

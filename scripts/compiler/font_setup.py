@@ -1,12 +1,16 @@
-"""Ensure the bundled Outfit font family is available to whatever renders the
-docx (LibreOffice headless). Without this, font substitution silently changes
-the agenda's look depending on which machine the server runs on — exactly
-what create_agenda/adjust_dates/etc. are designed to avoid.
+"""Ensure the bundled fonts are available to LibreOffice for the one-off
+template compile (scripts/compile_template.py).
+
+Compiler-only, same reasoning as soffice.py in this directory: the runtime
+package never installs fonts system-wide -- pdf_assembler.py hands pymupdf
+the .ttf file directly on every insert_text() call, so no OS-level install
+or fontconfig cache refresh is needed (or done) at runtime.
 
 The .ttf files in assets/fonts/ are generated once (see assets/fonts/README,
 or regenerate with scripts/build_fonts.py) from Google's canonical Outfit
 variable font, with name-table entries set so each weight resolves under the
-exact family name the template's runs reference (e.g. "Outfit Black").
+exact family name the compiler's sentinel-annotated docx references (e.g.
+"Outfit Black").
 """
 from __future__ import annotations
 
