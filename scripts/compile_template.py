@@ -218,24 +218,30 @@ def _redact_rects(page: pymupdf.Page, rects, fill: tuple = WHITE) -> None:
             page.draw_rect(r, color=None, fill=item_fill)
 
 
-def _restore_borders_near(page: pymupdf.Page, y0: float, y1: float) -> None:
-    """Redraw every wide horizontal ruled line whose y falls in [y0, y1]
-    (queried fresh from the page's own vector content, not hardcoded) as
-    the topmost content on the page. A stroke has thickness -- the
-    template's ruled borders are 3pt wide -- so a label sitting close to
-    one, as most do, has its capture rect overlapping the stroke's own
-    width, not just the hairline path down its center; the redact/repaint
-    _redact_rects does for that label then visibly eats into the border
-    wherever they overlap, however small the redacted rect. Restoring the
-    exact same strokes on top afterward is simpler and more robust than
-    trying to keep every label's geometry clear of every border it might
-    be near."""
+def _restore_borders_near(page: pymupdf.Page, y0: float, y1: float, min_width: float = 50) -> None:
+    """Redraw every horizontal ruled line at least `min_width` points wide
+    whose y falls in [y0, y1] (queried fresh from the page's own vector
+    content, not hardcoded) as the topmost content on the page. A stroke
+    has thickness -- the template's ruled borders are 3pt wide -- so a
+    label sitting close to one, as most do, has its capture rect
+    overlapping the stroke's own width, not just the hairline path down
+    its center; the redact/repaint _redact_rects does for that label then
+    visibly eats into the border wherever they overlap, however small the
+    redacted rect. Restoring the exact same strokes on top afterward is
+    simpler and more robust than trying to keep every label's geometry
+    clear of every border it might be near.
+
+    `min_width` defaults to filtering out short vector paths that
+    happen to be horizontal but aren't a ruled line this function should
+    touch (e.g. a checkbox's own stroke) -- pass a lower value for a
+    narrower decorative rule (e.g. the to-do list's "Task"/"Due" column-
+    header underlines, ~23pt wide) that a caller wants restored too."""
     for d in page.get_drawings():
         if d["type"] != "s":
             continue
         r = d["rect"]
-        if r.height > 0.5 or r.width < 50:
-            continue  # not a wide horizontal ruled line
+        if r.height > 0.5 or r.width < min_width:
+            continue  # not a wide-enough horizontal ruled line
         if not (y0 <= r.y0 <= y1):
             continue
         page.draw_line((r.x0, r.y0), (r.x1, r.y1), color=d.get("color") or (0, 0, 0),
@@ -615,12 +621,28 @@ def main() -> None:
             raise SystemExit(f"expected {LC.TODO_ROW_CAPACITY} checkbox glyphs, found {len(checkbox_hits)}")
         todo_schedule_redact_pairs += [(hit, WHITE) for hit in checkbox_hits]
         _redact_rects(header_pdf[0], todo_schedule_redact_pairs)
-        # Covers both the calendar header band's own borders (y=38/71) and
-        # the "TO-DO LIST"/"DAILY SCHEDULE" label boxes' (y=87-113) -- see
-        # _redact_rects/_restore_borders_near's docstrings for why this is
-        # a separate, later step rather than something _redact_rects
-        # itself avoids needing.
-        _restore_borders_near(header_pdf[0], 30, 120)
+        # Covers the calendar header band's own borders (y=38/71), the
+        # "TO-DO LIST"/"DAILY SCHEDULE" label boxes' (y=87-113), and every
+        # row's own ruled line the length of both tables -- every one of
+        # the 18 todo rows and 20 schedule rows just redacted a cell right
+        # up against its row's border, and each one bleeds into it exactly
+        # like the header labels do -- see _redact_rects/
+        # _restore_borders_near's docstrings for why this is a separate,
+        # later step rather than something _redact_rects itself avoids
+        # needing. A too-narrow y-window here (this used to stop at 120,
+        # covering only the header band) previously left almost every row
+        # boundary on the page with a small gap right where that row's own
+        # dynamic content had been.
+        table_bottom = max(s.rect[3] for s in todo_schedule_slots) + 10
+        _restore_borders_near(header_pdf[0], 30, table_bottom)
+        # The "Task"/"Due" column-header underlines are real ruled lines
+        # too, but short (~23pt, one word wide) -- narrower than the
+        # min_width filter above lets through by default, since that's
+        # tuned to skip incidental short horizontal strokes (e.g. a
+        # checkbox's own edge) elsewhere on the page. Restore them
+        # separately, scoped tight enough (y=140-146) that a lower
+        # min_width here can't pick up anything unintended.
+        _restore_borders_near(header_pdf[0], 140, 146, min_width=15)
 
         # Vector-drawn checkboxes, not text: nothing guarantees Wingdings --
         # or any specific symbol font -- is installed on whichever machine

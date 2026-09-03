@@ -87,6 +87,33 @@ def _union(a: tuple, b: tuple) -> tuple:
     return (min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3]))
 
 
+def _find_ruled_line_y(page: pymupdf.Page, x0: float, x1: float, y_near: float) -> float | None:
+    """The y of the wide horizontal ruled line closest to `y_near` that
+    overlaps [x0, x1] on `page`'s own already-drawn chrome content
+    (queried fresh via get_drawings, not estimated). Used instead of
+    guessing a row boundary's y from adjacent slot rects: those are
+    cropped tight around their own captured text, which sits at its own
+    padding distance from the actual row border and isn't reliably at
+    the midpoint between two rows' rects -- see _draw_overview's wrapped-
+    task row-boundary erasure, which used to whiten a y computed that way
+    and could miss the real line by enough to leave it crossing straight
+    through the very text it was meant to look merged under."""
+    best = None
+    best_dist = None
+    for d in page.get_drawings():
+        if d["type"] != "s":
+            continue
+        r = d["rect"]
+        if r.height > 0.5 or r.width < 50:
+            continue  # not a wide horizontal ruled line
+        if r.x1 < x0 or r.x0 > x1:
+            continue
+        dist = abs(r.y0 - y_near)
+        if best_dist is None or dist < best_dist:
+            best, best_dist = r.y0, dist
+    return best
+
+
 # --------------------------------------------------------------------------
 # Header (every physical page)
 # --------------------------------------------------------------------------
@@ -150,8 +177,22 @@ def _draw_overview(page: pymupdf.Page, manifest, state: AgendaState, theme: Them
             top_slot = by_id.get(f"todo.row.{row + extra - 1}.task")
             bottom_slot = by_id.get(f"todo.row.{row + extra}.task")
             if top_slot is not None and bottom_slot is not None:
-                boundary_y = (top_slot.rect[3] + bottom_slot.rect[1]) / 2
-                band = pymupdf.Rect(top_slot.rect[0] - 2, boundary_y - 2, top_slot.rect[2] + 60, boundary_y + 2)
+                estimate_y = (top_slot.rect[3] + bottom_slot.rect[1]) / 2
+                line_y = _find_ruled_line_y(page, top_slot.rect[0], top_slot.rect[2], estimate_y)
+                if line_y is None:
+                    continue
+                # Erase clear across the task column, not just the narrow
+                # sentinel-cropped slot rect -- wrapped task text is
+                # widened well past it (see _draw_text's "widen" logic) and
+                # a fixed +60pt fudge factor doesn't reliably reach as far
+                # as real content can. The due column's own left edge is a
+                # stable right boundary regardless of what's drawn there:
+                # due text only ever widens rightward from it (same logic),
+                # never left, so stopping just short of it never erases
+                # into the due column's own, still-separate, ruled line.
+                due_bound = by_id.get(f"todo.row.{row + extra - 1}.due")
+                band_x1 = due_bound.rect[0] - 3 if due_bound is not None else top_slot.rect[2] + 60
+                band = pymupdf.Rect(top_slot.rect[0] - 2, line_y - 2, band_x1, line_y + 2)
                 page.draw_rect(band, color=None, fill=(1, 1, 1))
         row += task.rows
 
