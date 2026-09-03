@@ -39,17 +39,19 @@ def _padded(rect: tuple[float, float, float, float]) -> pymupdf.Rect:
 
 
 def _draw_text(page: pymupdf.Page, rect: pymupdf.Rect, text: str, *, role: str, weight: str,
-               size_half_points: int, align: str, theme: Theme, widen: bool = True) -> None:
+               size_half_points: int, align: str, theme: Theme, widen: bool = True, center: bool = True) -> None:
     if not text:
         return
     from magenda.font_packs import FONT_PACKS
-    from magenda.text_fit import text_width_twips
+    from magenda.text_fit import text_line_height_twips, text_width_twips
 
     scale = theme_mod.role_size_scale(theme)
     fontsize = (size_half_points / 2) * scale
     color = _hex_to_rgb(theme_mod.role_color(theme, role))
     fontfile = str(theme_mod.role_font_file(theme, weight))
     fontname = f"{theme.font_pack}_{weight}"
+    family = FONT_PACKS[theme.font_pack]["weights"][weight]
+    scaled_size_half_points = round(size_half_points * scale)
 
     if align == "left" and widen:
         # Most slot rects (scripts/compile_template.py) are cropped tight
@@ -62,12 +64,45 @@ def _draw_text(page: pymupdf.Page, rect: pymupdf.Rect, text: str, *, role: str, 
         # anchored correctly, so widen the box to fit the real text's own
         # measured width rather than risk insert_textbox silently dropping
         # it for not fitting the captured one.
-        family = FONT_PACKS[theme.font_pack]["weights"][weight]
-        widest_line = max((text_width_twips(line, family=family, size_half_points=round(size_half_points * scale))
+        widest_line = max((text_width_twips(line, family=family, size_half_points=scaled_size_half_points)
                             for line in text.split("\n")), default=0)
         needed_width = widest_line / 20 + 4  # twips -> points, plus a hair of padding
         if needed_width > rect.width:
             rect = pymupdf.Rect(rect.x0, rect.y0, rect.x0 + needed_width, rect.y1)
+
+    # insert_textbox always starts its first line at the box's own top edge
+    # and never centers vertically -- so any slack between a rect's height
+    # and its actual content (the padding _padded adds around a tightly-
+    # cropped capture rect; a delegated row's calibrated 2-line height
+    # showing only 1 line; a union of several row slots for a wrapped
+    # to-do task that didn't end up needing all of them) landed entirely
+    # below the text, reading as everything pinned to the top of its own
+    # box. Shift the box down by half that slack so the content lands
+    # centered instead -- estimated from this role/weight/size's own real
+    # line height (text_line_height_twips), which is close to but not
+    # exactly insert_textbox's own internal metric, so the box keeps its
+    # *full* original height (just relocated) rather than being shrunk to
+    # the estimate: shrinking to a tight fit occasionally undershot
+    # insert_textbox's real requirement by a fraction of a point, and it
+    # silently drops text that doesn't fit rather than clipping it. A
+    # shifted-but-not-shrunk box can end up with its bottom edge past the
+    # original rect's own -- harmless, since insert_textbox only ever
+    # draws the lines it's given and never pads or outlines the box itself.
+    # `center=False` opts a caller out of this entirely -- used only where
+    # a rect's "slack" isn't really slack at all: a to-do task spanning
+    # several physical row slots is deliberately drawn top-anchored across
+    # their union, one text line per row, so that the row-boundary erasure
+    # right below (_find_ruled_line_y and its caller) -- which targets a
+    # specific chrome ruled line, not wherever this function happens to
+    # put a line of text -- still lands under the right line. Shifting
+    # that block down would desync the two.
+    if center:
+        line_height = text_line_height_twips(family, scaled_size_half_points) / 20
+        content_height = line_height * (text.count("\n") + 1)
+        slack = rect.height - content_height
+        if slack > 0:
+            shift = slack / 2
+            rect = pymupdf.Rect(rect.x0, rect.y0 + shift, rect.x1, rect.y1 + shift)
 
     page.insert_textbox(
         rect, text, fontsize=fontsize, fontname=fontname, fontfile=fontfile, color=color,
@@ -166,7 +201,7 @@ def _draw_overview(page: pymupdf.Page, manifest, state: AgendaState, theme: Them
                     rect = _union(rect, extra_slot.rect)
             _draw_text(page, _padded(rect), "\n".join(task.lines), role=task_slot.role,
                        weight=task_slot.weight, size_half_points=task.size_half_points,
-                       align="left", theme=theme)
+                       align="left", theme=theme, center=(task.rows == 1))
         if due_slot is not None and task.due:
             _draw_text(page, _padded(due_slot.rect), task.due, role=due_slot.role, weight=due_slot.weight,
                        size_half_points=due_slot.size_half_points, align="left", theme=theme)
