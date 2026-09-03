@@ -134,6 +134,11 @@ _SLOT_BG_FILL = {
     "delegated.header.task": _GRAY_D9,
     "delegated.header.owner": _GRAY_D9,
     "delegated.header.status": _GRAY_D9,
+    # next-four-weeks grid's own M/T/W/T/F/S/S column-header row -- same
+    # w:fill="E6E6E6" as the calendar header's weekday-label row above,
+    # transcribed from assets/template.docx (missing here left it
+    # defaulting to WHITE, the fallback for anything not in this table).
+    "next4weeks.col_header.": _GRAY_E6,
 }
 
 

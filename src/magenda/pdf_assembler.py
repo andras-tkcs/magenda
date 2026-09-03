@@ -149,6 +149,60 @@ def _find_ruled_line_y(page: pymupdf.Page, x0: float, x1: float, y_near: float) 
     return best
 
 
+def _erase_checkboxes_near(page: pymupdf.Page, x_max: float, y0: float, y1: float) -> None:
+    """Whiten every small square checkbox stroke -- baked into chrome, one
+    per physical to-do row, see scripts/compile_template.py's checkbox
+    handling -- whose bounding box sits left of `x_max` and within
+    [y0, y1]. Used to suppress a continuation row's own checkbox when a
+    task's wrapped text spans multiple physical rows: the template's own
+    vMerge behavior (scripts/compiler/xml_ops.py's append_tasks, the
+    pre-rewrite renderer this one replaced) merges the whole row --
+    checkbox cell included, not just the task cell -- so a continuation
+    row never had a checkbox of its own to begin with. Left alone, this
+    procedural redraw's per-row checkbox (drawn once per physical row,
+    with no notion of a task spanning several) reads as a second,
+    separate to-do item sitting right under the first."""
+    for d in page.get_drawings():
+        if d["type"] != "s":
+            continue
+        r = d["rect"]
+        if r.width > 15 or r.height > 15 or r.width < 2 or r.height < 2:
+            continue  # not a small square-ish glyph
+        if r.x1 > x_max or not (y0 <= r.y0 <= y1):
+            continue
+        page.draw_rect(pymupdf.Rect(r.x0 - 1, r.y0 - 1, r.x1 + 1, r.y1 + 1), color=None, fill=(1, 1, 1))
+
+
+def _find_shaded_band_x(page: pymupdf.Page, x_near: float, y_near: float) -> tuple[float, float] | None:
+    """The (x0, x1) of the non-white filled rectangle covering (`x_near`,
+    `y_near`) -- used to center a header label (e.g. "TO-DO LIST") against
+    its real shaded cell width. That cell's own slot rect is cropped tight
+    around a short compile-time sentinel token that itself rendered
+    centered in the cell (see build_todo_schedule_fixture), so its left
+    edge isn't the cell's own left edge -- drawing the real, much wider
+    label left-aligned from there (the usual "widen rightward" handling
+    every other left-aligned slot gets) systematically overshoots to the
+    right of true center instead. The cell's shading is untouched chrome
+    (never part of any redaction rect), so it's a reliable width to
+    measure against. Matched by actually containing (x_near, y_near), not
+    just "widest at this y" -- the to-do and daily-schedule boxes sit on
+    the same row, so the wrong one is as wide a candidate as the right
+    one."""
+    best = None
+    for d in page.get_drawings():
+        fill = d.get("fill")
+        if fill is None or fill == (1, 1, 1):
+            continue
+        r = d.get("rect")
+        if r is None or r.width < 50:
+            continue
+        if not (r.x0 - 2 <= x_near <= r.x1 + 2 and r.y0 - 2 <= y_near <= r.y1 + 2):
+            continue
+        if best is None or r.width > best.width:
+            best = r
+    return (best.x0, best.x1) if best is not None else None
+
+
 # --------------------------------------------------------------------------
 # Header (every physical page)
 # --------------------------------------------------------------------------
@@ -182,10 +236,25 @@ def _draw_overview(page: pymupdf.Page, manifest, state: AgendaState, theme: Them
     by_id = {s.id: s for s in manifest.page_slots["overview"]}
 
     # Static labels + next-four-weeks header letters (fixed text=... on the
-    # slot itself).
+    # slot itself). "TO-DO LIST"/"DAILY SCHEDULE" are centered in their own
+    # shaded header box in the template (w:jc center) -- draw them against
+    # that box's real width (_find_shaded_band_x) rather than the usual
+    # left-anchor-and-widen-rightward handling every other slot gets, which
+    # only looks right for a slot whose captured rect already sits at its
+    # cell's true left edge.
     for slot in manifest.page_slots["overview"]:
-        if slot.text is not None:
-            _draw_slot(page, slot, None, theme)
+        if slot.text is None:
+            continue
+        if slot.id in ("todo.label", "schedule.label"):
+            x_mid = (slot.rect[0] + slot.rect[2]) / 2
+            y_mid = (slot.rect[1] + slot.rect[3]) / 2
+            band_x = _find_shaded_band_x(page, x_mid, y_mid)
+            if band_x is not None:
+                rect = pymupdf.Rect(band_x[0], slot.rect[1] - _PAD_TOP, band_x[1], slot.rect[3] + _PAD_BOTTOM)
+                _draw_text(page, rect, slot.text, role=slot.role, weight=slot.weight,
+                           size_half_points=slot.size_half_points, align="center", theme=theme, widen=False)
+                continue
+        _draw_slot(page, slot, None, theme)
 
     # to-do list -- walk fixed rows top-down, allocating `rows` consecutive
     # row slots per task (mirrors the pre-rewrite xml_ops.append_tasks).
@@ -229,6 +298,12 @@ def _draw_overview(page: pymupdf.Page, manifest, state: AgendaState, theme: Them
                 band_x1 = due_bound.rect[0] - 3 if due_bound is not None else top_slot.rect[2] + 60
                 band = pymupdf.Rect(top_slot.rect[0] - 2, line_y - 2, band_x1, line_y + 2)
                 page.draw_rect(band, color=None, fill=(1, 1, 1))
+            # This continuation row never had a checkbox of its own to
+            # begin with (see _erase_checkboxes_near) -- erase the one
+            # this redraw put there anyway, or the wrapped task reads as
+            # two separate to-do items instead of one merged row.
+            if bottom_slot is not None:
+                _erase_checkboxes_near(page, bottom_slot.rect[0] - 2, bottom_slot.rect[1] - 12, bottom_slot.rect[3] + 12)
         row += task.rows
 
     # daily schedule
