@@ -627,18 +627,22 @@ def main() -> None:
         todo_schedule_redact_pairs += [(hit, WHITE) for hit in checkbox_hits]
         _redact_rects(header_pdf[0], todo_schedule_redact_pairs)
         # Covers the calendar header band's own borders (y=38/71), the
-        # "TO-DO LIST"/"DAILY SCHEDULE" label boxes' (y=87-113), and every
+        # "TO-DO LIST"/"DAILY SCHEDULE" label boxes' (y=87-113), every
         # row's own ruled line the length of both tables -- every one of
         # the 18 todo rows and 20 schedule rows just redacted a cell right
         # up against its row's border, and each one bleeds into it exactly
-        # like the header labels do -- see _redact_rects/
+        # like the header labels do -- and the next-four-weeks grid below
+        # the to-do list (its own day-number cells, redacted earlier as
+        # part of sc_header.resolve() up above, never got a restore pass
+        # of their own before this one). See _redact_rects/
         # _restore_borders_near's docstrings for why this is a separate,
         # later step rather than something _redact_rects itself avoids
         # needing. A too-narrow y-window here (this used to stop at 120,
         # covering only the header band) previously left almost every row
-        # boundary on the page with a small gap right where that row's own
+        # boundary on the page -- the next-four-weeks grid's own closing
+        # border included -- with a small gap right where that row's own
         # dynamic content had been.
-        table_bottom = max(s.rect[3] for s in todo_schedule_slots) + 10
+        table_bottom = max(s.rect[3] for s in todo_schedule_slots + n4w_slots) + 10
         _restore_borders_near(header_pdf[0], 30, table_bottom)
         # The "Task"/"Due" column-header underlines are real ruled lines
         # too, but short (~23pt, one word wide) -- narrower than the
