@@ -103,6 +103,23 @@ def _draw_text(page: pymupdf.Page, rect: pymupdf.Rect, text: str, *, role: str, 
         if slack > 0:
             shift = slack / 2
             rect = pymupdf.Rect(rect.x0, rect.y0 + shift, rect.x1, rect.y1 + shift)
+        elif slack < 0:
+            # The box is shorter than its own content needs -- e.g. a
+            # to-do task whose wrapped line count was only sized against
+            # the fixed-height row it was allocated (see agenda_state's
+            # _fit_todo_task), not against this tightly-cropped capture
+            # rect's own much shorter height. insert_textbox drops text
+            # it can't fit rather than clipping it, so a slot sized like
+            # that would silently lose the whole task -- grow the box
+            # down to the height the content actually needs, the same
+            # safety valve `widen` above gives left-aligned text that
+            # measures wider than its own captured rect. content_height is
+            # only this estimate's own measure of insert_textbox's real
+            # requirement (see the module docstring above), which can
+            # undershoot it by a point or so -- pad by _PAD_BOTTOM again
+            # (on top of what `rect` already carries from _padded) for the
+            # same margin every other caller's bottom edge gets.
+            rect = pymupdf.Rect(rect.x0, rect.y0, rect.x1, rect.y0 + content_height + _PAD_BOTTOM)
 
     page.insert_textbox(
         rect, text, fontsize=fontsize, fontname=fontname, fontfile=fontfile, color=color,

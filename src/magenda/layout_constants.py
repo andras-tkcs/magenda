@@ -81,6 +81,7 @@ DELEGATED_CADENCE_FONT_SIZE = 18  # half-points (9pt) -- small label above the t
 DELEGATED_OWNER_FONT_SIZE = 22
 DELEGATED_STATUS_FONT_SIZE = 22
 DELEGATED_BULLET_PREFIX = "• "
+DELEGATED_BULLET_CONTINUATION_INDENT = "  "  # same rendered width as DELEGATED_BULLET_PREFIX, for wrapped status lines
 DELEGATED_ROWS_PER_PAGE = 8  # worst-case-calibrated estimate, see xml_ops.py history
 DELEGATED_ROW_NUMBER_FONT_SIZE = 28
 DELEGATED_ROW_NUMBER_FAMILY_WEIGHT = "black"

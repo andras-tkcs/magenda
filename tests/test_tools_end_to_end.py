@@ -205,6 +205,44 @@ def test_add_delegated_tasks_rejects_bad_cadence():
         tools.add_delegated_tasks(date, [{"text": "Bad cadence", "cadence": "yearly"}])
 
 
+def test_todo_task_wrapped_to_a_single_row_still_renders_in_full():
+    """Regression: a to-do task long enough to downsize-and-wrap onto 2
+    lines but still short enough to fit within one physical row's height
+    (TodoTask.rows == 1) used to vanish outright -- its row was drawn into
+    a box only tall enough for the row's tightly-cropped single-line
+    capture rect, and pymupdf's insert_textbox drops text it can't fit
+    rather than clipping it."""
+    date = "2026-09-12"
+    tools.create_agenda(date)
+    long_text = "Incorporate Andris's support notes into the shared support doc"
+    tools.add_tasks(date, [{"text": long_text, "due": "09/03"}])
+
+    result = tools.render_pdf(date)
+    doc = _open_pdf(result)
+    # The wrapped words must all still be present -- collapse whitespace
+    # since the line breaks land in the middle of the original text.
+    full_text = " ".join("".join(page.get_text() for page in doc).split())
+    assert "Incorporate Andris's support notes into the shared support doc" in full_text
+
+
+def test_delegated_status_update_wraps_instead_of_being_cut_off():
+    """Regression: a status update too wide for the column used to be
+    truncated (fit_single_line, silently dropping the rest of the
+    sentence) instead of wrapping onto a continuation line."""
+    date = "2026-09-13"
+    tools.create_agenda(date)
+    long_status = "PO questions answered by Toby in detail, pro forma sent to finance for approval"
+    tools.add_delegated_tasks(
+        date, [{"text": "Harman pre-payment", "owner": "Michael", "status": long_status}]
+    )
+
+    result = tools.render_pdf(date)
+    doc = _open_pdf(result)
+    delegated_text = doc[1].get_text()
+    assert "approval" in delegated_text  # the tail end must not be cut off
+    assert " ".join(delegated_text.split()).find(long_status) != -1
+
+
 def test_daily_schedule_entry_links_to_its_meeting_page():
     date = "2026-09-08"
     tools.create_agenda(date)
