@@ -14,7 +14,7 @@ from __future__ import annotations
 import pymupdf
 
 from magenda import compiled_template, layout_constants as LC, pdf_links, theme as theme_mod
-from magenda.agenda_state import AgendaState, DelegatedTask, schedule_slot_ids
+from magenda.agenda_state import AgendaState, DelegatedTask, TodoTask, schedule_slot_ids
 from magenda.slot_schema import Slot
 from magenda.theme import Theme
 
@@ -151,21 +151,14 @@ def _draw_slot(page: pymupdf.Page, slot: Slot, text: str | None, theme: Theme) -
                size_half_points=slot.size_half_points, align=slot.align, theme=theme)
 
 
-def _union(a: tuple, b: tuple) -> tuple:
-    return (min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3]))
-
-
-def _find_ruled_line(page: pymupdf.Page, x0: float, x1: float, y_near: float) -> pymupdf.Rect | None:
+def _find_ruled_line(page: pymupdf.Page, x0: float, x1: float, y_near: float) -> dict | None:
     """The wide horizontal ruled line closest to `y_near` that overlaps
     [x0, x1] on `page`'s own already-drawn chrome content (queried fresh
-    via get_drawings, not estimated) -- its own full rect, not just its y,
-    so a caller erasing it can match its real width exactly rather than
-    guessing one (see _draw_overview's wrapped-task row-boundary erasure,
-    which needs both: the earlier midpoint-of-two-slot-rects estimate for
-    y could miss the real line enough to leave it crossing straight
-    through the wrapped continuation text, and a flat fudge-factor width
-    either fell short of what real widened content needed or, guessed too
-    generously, ate into the next column's own separate line)."""
+    via get_drawings, not estimated) -- the full drawing dict (rect,
+    stroke color, stroke width), not just a rect, so a caller redrawing
+    or erasing it can match its real geometry and style exactly rather
+    than guessing either (see _draw_todo_list, which uses one real
+    to-do-grid line as the template for every ruled line it draws)."""
     best = None
     best_dist = None
     for d in page.get_drawings():
@@ -178,7 +171,31 @@ def _find_ruled_line(page: pymupdf.Page, x0: float, x1: float, y_near: float) ->
             continue
         dist = abs(r.y0 - y_near)
         if best_dist is None or dist < best_dist:
-            best, best_dist = r, dist
+            best, best_dist = d, dist
+    return best
+
+
+def _find_checkbox(page: pymupdf.Page, x_max: float, y0: float, y1: float) -> dict | None:
+    """The small square checkbox stroke -- baked into chrome, one per
+    physical to-do row, see scripts/compile_template.py's checkbox
+    handling -- closest to [y0, y1] whose bounding box sits left of
+    `x_max`. The full drawing dict, for the same reason _find_ruled_line
+    returns one: _draw_todo_list uses one real checkbox's own size,
+    position, color and stroke width as the template for every checkbox
+    it draws."""
+    best = None
+    best_dist = None
+    for d in page.get_drawings():
+        if d["type"] != "s":
+            continue
+        r = d["rect"]
+        if r.width > 15 or r.height > 15 or r.width < 2 or r.height < 2:
+            continue  # not a small square-ish glyph
+        if r.x1 > x_max or not (y0 <= r.y0 <= y1):
+            continue
+        dist = abs((r.y0 + r.y1) / 2 - (y0 + y1) / 2)
+        if best_dist is None or dist < best_dist:
+            best, best_dist = d, dist
     return best
 
 
@@ -186,15 +203,10 @@ def _erase_checkboxes_near(page: pymupdf.Page, x_max: float, y0: float, y1: floa
     """Whiten every small square checkbox stroke -- baked into chrome, one
     per physical to-do row, see scripts/compile_template.py's checkbox
     handling -- whose bounding box sits left of `x_max` and within
-    [y0, y1]. Used to suppress a continuation row's own checkbox when a
-    task's wrapped text spans multiple physical rows: the template's own
-    vMerge behavior (scripts/compiler/xml_ops.py's append_tasks, the
-    pre-rewrite renderer this one replaced) merges the whole row --
-    checkbox cell included, not just the task cell -- so a continuation
-    row never had a checkbox of its own to begin with. Left alone, this
-    procedural redraw's per-row checkbox (drawn once per physical row,
-    with no notion of a task spanning several) reads as a second,
-    separate to-do item sitting right under the first."""
+    [y0, y1]. _draw_todo_list uses this to clear chrome's entire 18-row
+    grid (every row's checkbox, whether or not this render ends up
+    putting a task there) before redrawing the grid procedurally at
+    whatever per-row height each task's own wrapped lines need."""
     for d in page.get_drawings():
         if d["type"] != "s":
             continue
@@ -204,6 +216,25 @@ def _erase_checkboxes_near(page: pymupdf.Page, x_max: float, y0: float, y1: floa
         if r.x1 > x_max or not (y0 <= r.y0 <= y1):
             continue
         page.draw_rect(pymupdf.Rect(r.x0 - 1, r.y0 - 1, r.x1 + 1, r.y1 + 1), color=None, fill=(1, 1, 1))
+
+
+def _erase_ruled_lines(page: pymupdf.Page, x0: float, x1: float, y0: float, y1: float) -> None:
+    """Whiten every wide horizontal ruled line -- baked into chrome, one
+    per physical to-do row boundary -- overlapping [x0, x1] whose top
+    edge falls within [y0, y1]. _draw_todo_list's counterpart to
+    _erase_checkboxes_near: together they clear the whole chrome-baked
+    18-row grid before redrawing it procedurally."""
+    for d in page.get_drawings():
+        if d["type"] != "s":
+            continue
+        r = d["rect"]
+        if r.height > 0.5 or r.width < 50:
+            continue  # not a wide horizontal ruled line
+        if r.x1 < x0 or r.x0 > x1:
+            continue
+        if not (y0 <= r.y0 <= y1):
+            continue
+        page.draw_rect(pymupdf.Rect(r.x0 - 1, r.y0 - 1.5, r.x1 + 1, r.y0 + 1.5), color=None, fill=(1, 1, 1))
 
 
 def _find_shaded_band_x(page: pymupdf.Page, x_near: float, y_near: float) -> tuple[float, float] | None:
@@ -263,6 +294,130 @@ def _draw_header(page: pymupdf.Page, manifest, values: dict[str, str], theme: Th
 # Overview page: to-do list, daily schedule, next-four-weeks grid
 # --------------------------------------------------------------------------
 
+def _todo_row_height_pt(task: TodoTask, theme: Theme, base_row_height_pt: float) -> float:
+    """Full row height (points) for one to-do task, given the chrome-
+    baked grid's own calibrated single-row height (LC.TODO_ROW_HEIGHT_
+    TWIPS) and the active theme's line height at this task's own fitted
+    font size -- grows past the base only once this task's lines no
+    longer fit the base row at that size. Mirrors _delegated_row_height's
+    base+extra*line_height growth, except delegated's base always holds
+    exactly 2 lines (its font size is fixed) while a to-do row's "how
+    many lines fit before growing" floats with each task's own size
+    (_fit_todo_task shrinks the font before it wraps at all): a min-size
+    task already packs 2 lines into one base row; a max-size one only
+    ever fit 1. This is exactly the threshold TodoTask.rows itself is
+    computed against (see _fit_todo_task), so a task's drawn height here
+    never exceeds what its rows-based capacity accounting already
+    reserved for it."""
+    line_height = _line_height_pt(LC.TODO_TASK_FAMILY_WEIGHT, task.size_half_points, theme)
+    base_lines = max(1, int(base_row_height_pt // line_height))
+    extra = max(0, len(task.lines) - base_lines)
+    return base_row_height_pt + extra * line_height
+
+
+def _draw_todo_list(page: pymupdf.Page, by_id: dict, state: AgendaState, theme: Theme) -> None:
+    """Draw the to-do list as its own small procedural table -- each
+    task's row grows to exactly the height its own wrapped lines need
+    (_todo_row_height_pt, mirroring the delegated-tasks page's own
+    _delegated_row_height/_draw_delegated_page) -- instead of being
+    merged across a whole number of the chrome-baked table's fixed-
+    height rows (scripts/compile_template.py bakes LC.TODO_ROW_CAPACITY
+    of those, each LC.TODO_ROW_HEIGHT_TWIPS tall, complete with its own
+    ruled line and checkbox -- see the pre-rewrite xml_ops.append_tasks
+    this replaced). That fixed grid forced a wrapped task to consume a
+    whole extra row even when its own lines needed only a little more
+    room than one row already had, forced a merge hack that erased a
+    chrome-baked line/checkbox per skipped row, and -- since a wrapped
+    task's lines then had to be drawn one whole chunk per *physical* row
+    rather than as a single block -- left its text sitting at the top of
+    each of its rows instead of centered across the merged block as a
+    whole.
+
+    The chrome-baked grid itself isn't touched at compile time (its
+    fixed size assumes every task fits in exactly one row), so this
+    erases the whole grid's own ruled lines and checkboxes on every
+    render (_erase_ruled_lines, _erase_checkboxes_near) and redraws both
+    fresh, row by row, at whatever height each row's own content needs,
+    followed by as many blank (fixed-height) rows as fit in whatever
+    budget is left -- an empty checkbox row is itself the point of a
+    printable to-do list (room to add a task by hand), not wasted space
+    to reclaim. Every redrawn row's stroke color/width and the
+    checkbox's own size/position are read back from one real row this
+    page's chrome still carries (_find_ruled_line, _find_checkbox)
+    rather than hardcoded, so this keeps matching chrome across a theme
+    or template recompile without needing its own touch-up."""
+    task0 = by_id.get("todo.row.0.task")
+    due0 = by_id.get("todo.row.0.due")
+    if task0 is None or due0 is None:
+        return  # stale compiled bundle -- nothing to anchor the grid on
+
+    base_row_height_pt = LC.TODO_ROW_HEIGHT_TWIPS / 20
+
+    # Row 0 has no ruled line of its own above it (it sits directly under
+    # the "Task"/"Due" column headers' own short underlines instead, not
+    # a full-width row boundary) -- anchor its top by walking back one
+    # row height from the real ruled line between row 0 and row 1, found
+    # near row 0's own (tightly-cropped) capture rect.
+    line = _find_ruled_line(page, task0.rect[0] - 40, due0.rect[2] + 40,
+                             task0.rect[3] + (base_row_height_pt - (task0.rect[3] - task0.rect[1])))
+    if line is None:
+        return
+    x0, x1 = line["rect"].x0, line["rect"].x1
+    line_color, line_width = line.get("color") or (0, 0, 0), line.get("width") or 0.75
+    row0_top = line["rect"].y0 - base_row_height_pt
+
+    checkbox = _find_checkbox(page, task0.rect[0] - 2, task0.rect[1] - 12, task0.rect[3] + 12)
+    if checkbox is None:
+        return
+    box_rect = checkbox["rect"]
+    box_size = box_rect.width
+    box_cx = (box_rect.x0 + box_rect.x1) / 2
+    box_color, box_width = checkbox.get("color") or (0, 0, 0), checkbox.get("width") or 0.75
+
+    grid_bottom = row0_top + LC.TODO_ROW_CAPACITY * base_row_height_pt
+
+    # Clear the whole chrome-baked grid up front, before drawing anything
+    # of our own -- text is always the topmost thing on the page this
+    # way, so it can never end up with a sliver of its own glyphs erased
+    # by an estimate that landed a little too close (a real risk once
+    # erasure ran last: a font pack whose ascent metrics differ from
+    # Outfit's, the pack this grid's geometry was captured against, can
+    # render a row's own first line closer to its erased top boundary
+    # than Outfit does).
+    _erase_ruled_lines(page, x0 - 1, x1 + 1, row0_top + 1, grid_bottom)
+    _erase_checkboxes_near(page, task0.rect[0] - 2, row0_top - 2, grid_bottom + 2)
+
+    def draw_row(y: float, row_height: float, is_first: bool, task: TodoTask | None) -> None:
+        if not is_first:
+            page.draw_line((x0, y), (x1, y), color=line_color, width=line_width)
+        cy = y + row_height / 2
+        page.draw_rect(pymupdf.Rect(box_cx - box_size / 2, cy - box_size / 2,
+                                     box_cx + box_size / 2, cy + box_size / 2),
+                        color=box_color, fill=None, width=box_width)
+        if task is None:
+            return
+        task_rect = pymupdf.Rect(task0.rect[0] - _PAD_SIDE, y, due0.rect[0] - 4, y + row_height)
+        _draw_text(page, task_rect, "\n".join(task.lines), role=task0.role, weight=task0.weight,
+                   size_half_points=task.size_half_points, align="left", theme=theme)
+        if task.due:
+            due_rect = pymupdf.Rect(due0.rect[0] - _PAD_SIDE, y, x1 - 4, y + row_height)
+            _draw_text(page, due_rect, task.due, role=due0.role, weight=due0.weight,
+                       size_half_points=due0.size_half_points, align="left", theme=theme)
+
+    y = row0_top
+    is_first = True
+    for task in state.todo_tasks:
+        row_height = _todo_row_height_pt(task, theme, base_row_height_pt)
+        draw_row(y, row_height, is_first=is_first, task=task)
+        y += row_height
+        is_first = False
+
+    while y + base_row_height_pt <= grid_bottom + 0.5:
+        draw_row(y, base_row_height_pt, is_first=is_first, task=None)
+        y += base_row_height_pt
+        is_first = False
+
+
 def _draw_overview(page: pymupdf.Page, manifest, state: AgendaState, theme: Theme) -> None:
     from magenda import calendar_math
 
@@ -289,88 +444,7 @@ def _draw_overview(page: pymupdf.Page, manifest, state: AgendaState, theme: Them
                 continue
         _draw_slot(page, slot, None, theme)
 
-    # to-do list -- walk fixed rows top-down, allocating `rows` consecutive
-    # row slots per task (mirrors the pre-rewrite xml_ops.append_tasks).
-    row = 0
-    for task in state.todo_tasks:
-        task_slot = by_id.get(f"todo.row.{row}.task")
-        due_slot = by_id.get(f"todo.row.{row}.due")
-        if task_slot is not None:
-            row_slots = [by_id.get(f"todo.row.{row + extra}.task") for extra in range(task.rows)]
-            if task.rows > 1 and all(s is not None for s in row_slots):
-                # A wrapped task spanning >1 row shares one ruled line, not
-                # one per row: whiten the row-boundary line(s) it would
-                # otherwise cross (text_fit already decided this many rows
-                # are needed for it) *before* drawing any of this task's
-                # own text, not after -- text is always the topmost thing
-                # on the page this way, so it can never end up with a
-                # sliver of its own glyphs erased by an estimate that
-                # landed a little too close (a real risk once erasure ran
-                # last: a font pack whose ascent metrics differ from
-                # Outfit's, the pack the padding below was calibrated
-                # against, can render a row's own first line closer to
-                # that row's erased top boundary than Outfit does). This
-                # also matches the template's original vMerge behaviour
-                # (scripts/compiler/xml_ops.py's append_tasks, the pre-
-                # rewrite renderer): every cell in a continuation row --
-                # checkbox and due column included, not just the task
-                # cell -- was merged away, so none of that row's own
-                # internal border shows anywhere along its width.
-                for extra in range(1, task.rows):
-                    top_slot, bottom_slot = row_slots[extra - 1], row_slots[extra]
-                    estimate_y = (top_slot.rect[3] + bottom_slot.rect[1]) / 2
-                    line = _find_ruled_line(page, top_slot.rect[0], top_slot.rect[2], estimate_y)
-                    if line is not None:
-                        band = pymupdf.Rect(line.x0 - 1, line.y0 - 2, line.x1 + 1, line.y0 + 2)
-                        page.draw_rect(band, color=None, fill=(1, 1, 1))
-                    # This continuation row never had a checkbox of its
-                    # own to begin with (see _erase_checkboxes_near) --
-                    # erase the one this redraw put there anyway, or the
-                    # wrapped task reads as two separate to-do items
-                    # instead of one merged row.
-                    _erase_checkboxes_near(page, bottom_slot.rect[0] - 2, bottom_slot.rect[1] - 12, bottom_slot.rect[3] + 12)
-
-                # Drawn confined to each physical row separately, not as
-                # one continuous block spanning their union -- a row's
-                # own fixed height (LC.TODO_ROW_HEIGHT_TWIPS) isn't in
-                # general a whole multiple of this content's own line
-                # height, so a block drawn continuously across the union
-                # can end up with a row boundary landing in the middle of
-                # a text line rather than between two of them, and the
-                # erasure above only ever erases at those fixed row
-                # boundaries -- if a line straddled one, erasing it would
-                # take part of that line's own glyphs out with it.
-                # Chunking the text into whole lines per row up front
-                # (using the same row height every row's own erasable
-                # boundary sits at) guarantees a boundary only ever falls
-                # in the gap between two chunks, never inside one.
-                line_height = _line_height_pt(task_slot.weight, task.size_half_points, theme)
-                lines_per_row = max(1, int((LC.TODO_ROW_HEIGHT_TWIPS / 20) // line_height))
-                lines = task.lines
-                for i, slot in enumerate(row_slots):
-                    is_last = i == len(row_slots) - 1
-                    chunk = lines[i * lines_per_row:] if is_last else lines[i * lines_per_row:(i + 1) * lines_per_row]
-                    if not chunk:
-                        continue
-                    chunk_rect = pymupdf.Rect(
-                        slot.rect[0] - _PAD_SIDE, slot.rect[1] - _PAD_TOP, slot.rect[2] + _PAD_SIDE,
-                        slot.rect[1] - _PAD_TOP + len(chunk) * line_height + _PAD_BOTTOM,
-                    )
-                    _draw_text(page, chunk_rect, "\n".join(chunk), role=task_slot.role, weight=task_slot.weight,
-                               size_half_points=task.size_half_points, align="left", theme=theme, center=False)
-            else:
-                rect = task_slot.rect
-                for extra in range(1, task.rows):
-                    extra_slot = by_id.get(f"todo.row.{row + extra}.task")
-                    if extra_slot is not None:
-                        rect = _union(rect, extra_slot.rect)
-                _draw_text(page, _padded(rect), "\n".join(task.lines), role=task_slot.role,
-                           weight=task_slot.weight, size_half_points=task.size_half_points,
-                           align="left", theme=theme, center=(task.rows == 1))
-        if due_slot is not None and task.due:
-            _draw_text(page, _padded(due_slot.rect), task.due, role=due_slot.role, weight=due_slot.weight,
-                       size_half_points=due_slot.size_half_points, align="left", theme=theme)
-        row += task.rows
+    _draw_todo_list(page, by_id, state, theme)
 
     # daily schedule
     for i, key in enumerate(schedule_slot_ids()):
