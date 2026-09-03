@@ -407,7 +407,12 @@ _DELEGATED_HEADER_LABELS = {
 }
 
 
-def _draw_delegated_page(page: pymupdf.Page, manifest, tasks: list, theme: Theme, *, is_last_page: bool = True) -> None:
+def _draw_delegated_page(page: pymupdf.Page, manifest, tasks: list, theme: Theme, *,
+                          is_last_page: bool = True, start_number: int = 1) -> None:
+    """Draw one delegated-tasks page. `start_number` is the row number the
+    first row on this page should carry -- numbering continues across
+    pages rather than restarting at 1 each time (the caller, assemble(),
+    tracks the running total across every page it draws)."""
     geom = manifest.delegated
     x0 = geom.table_top_left[0]
     y = geom.table_top_left[1]
@@ -457,7 +462,7 @@ def _draw_delegated_page(page: pymupdf.Page, manifest, tasks: list, theme: Theme
             page.draw_line((x0, y), (table_right, y), color=(0, 0, 0), width=border_sz)  # redraw over fill
 
         number_rect = pymupdf.Rect(col_x["number"], y, col_x["task"], row_rect_bottom)
-        _draw_text(page, number_rect, str(i + 1), role="label", weight=LC.DELEGATED_ROW_NUMBER_FAMILY_WEIGHT,
+        _draw_text(page, number_rect, str(start_number + i), role="label", weight=LC.DELEGATED_ROW_NUMBER_FAMILY_WEIGHT,
                    size_half_points=LC.DELEGATED_ROW_NUMBER_FONT_SIZE, align="center", theme=theme)
 
         task_rect = pymupdf.Rect(col_x["task"] + 2, y, col_x["owner"] - 2, row_rect_bottom)
@@ -585,8 +590,11 @@ def assemble(state: AgendaState, theme: Theme) -> bytes:
 
     _draw_overview(out[0], manifest, state, theme)
 
+    row_number = 1
     for i, page_tasks in enumerate(delegated_pages):
-        _draw_delegated_page(out[1 + i], manifest, page_tasks, theme, is_last_page=(i == n_delegated - 1))
+        _draw_delegated_page(out[1 + i], manifest, page_tasks, theme,
+                              is_last_page=(i == n_delegated - 1), start_number=row_number)
+        row_number += len(page_tasks)
 
     meeting_start = 1 + n_delegated
     for i, title in enumerate(state.meetings):
