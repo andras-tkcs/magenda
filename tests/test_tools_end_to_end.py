@@ -205,6 +205,40 @@ def test_add_delegated_tasks_rejects_bad_cadence():
         tools.add_delegated_tasks(date, [{"text": "Bad cadence", "cadence": "yearly"}])
 
 
+def test_delegated_task_numbering_continues_across_pages():
+    """Regression: row numbers used to restart at 1 on every delegated-
+    tasks page instead of continuing from where the previous page left
+    off (e.g. page 2 starting over at 1 instead of 9)."""
+    date = "2026-09-14"
+    tools.create_agenda(date)
+    tools.add_delegated_tasks(date, [{"text": f"Task {i}"} for i in range(20)])
+
+    result = tools.render_pdf(date)
+    doc = _open_pdf(result)
+    num_delegated_pages = len(doc) - 3  # overview + blank meeting-1 slot + closing
+    assert num_delegated_pages >= 2
+
+    from magenda import compiled_template
+    from magenda import layout_constants as LC
+
+    manifest = compiled_template.load().manifest
+    table_top = manifest.delegated.table_top_left[1]
+    task_left = manifest.delegated.table_top_left[0] + LC.DELEGATED_COLUMN_WIDTHS_TWIPS["number"] / 20
+
+    numbers = []
+    for page in doc[1:1 + num_delegated_pages]:
+        # Restrict to the row-number column, below the table's own header
+        # row -- every other page (calendar header's day numbers, "CW NN",
+        # the year) also has digit-only words further up the page.
+        page_numbers = sorted(
+            (w[1], int(w[4])) for w in page.get_text("words")
+            if w[1] > table_top and w[2] < task_left and w[4].isdigit()
+        )
+        numbers.extend(n for _, n in page_numbers)
+
+    assert numbers == list(range(1, 21))  # continuous, never resets
+
+
 def test_todo_task_wrapped_to_a_single_row_still_renders_in_full():
     """Regression: a to-do task long enough to downsize-and-wrap onto 2
     lines but still short enough to fit within one physical row's height

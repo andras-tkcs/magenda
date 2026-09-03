@@ -96,8 +96,8 @@ def _draw_text(page: pymupdf.Page, rect: pymupdf.Rect, text: str, *, role: str, 
     # specific chrome ruled line, not wherever this function happens to
     # put a line of text -- still lands under the right line. Shifting
     # that block down would desync the two.
+    line_height = text_line_height_twips(family, scaled_size_half_points) / 20
     if center:
-        line_height = text_line_height_twips(family, scaled_size_half_points) / 20
         content_height = line_height * (text.count("\n") + 1)
         slack = rect.height - content_height
         if slack > 0:
@@ -121,10 +121,26 @@ def _draw_text(page: pymupdf.Page, rect: pymupdf.Rect, text: str, *, role: str, 
             # same margin every other caller's bottom edge gets.
             rect = pymupdf.Rect(rect.x0, rect.y0, rect.x1, rect.y0 + content_height + _PAD_BOTTOM)
 
-    page.insert_textbox(
-        rect, text, fontsize=fontsize, fontname=fontname, fontfile=fontfile, color=color,
-        align=_ALIGN.get(align, pymupdf.TEXT_ALIGN_LEFT),
-    )
+    kwargs = dict(fontsize=fontsize, fontname=fontname, fontfile=fontfile, color=color,
+                  align=_ALIGN.get(align, pymupdf.TEXT_ALIGN_LEFT))
+    rc = page.insert_textbox(rect, text, **kwargs)
+    # Both safety valves above (`widen`, and the vertical grow just above)
+    # size the box from our own PIL-based estimate of what pymupdf's real
+    # text-layout engine needs -- close, per their own comments, but never
+    # guaranteed exact, and the gap between the two can be wider on some
+    # platform/pymupdf-version combination than whatever margin either
+    # estimate built in (observed in practice: a task that rendered in
+    # full here still lost text -- silently, per insert_textbox's own
+    # drop-don't-clip behavior -- on another build). rc is pymupdf's own
+    # authoritative fit signal (negative = didn't fit), so trust it over
+    # the estimate: keep growing the box on both axes and retrying until
+    # it actually reports success, rather than a single guess that's
+    # merely usually right.
+    attempts = 0
+    while rc < 0 and attempts < 8:
+        rect = pymupdf.Rect(rect.x0, rect.y0, rect.x1 + 10, rect.y1 + line_height)
+        rc = page.insert_textbox(rect, text, **kwargs)
+        attempts += 1
 
 
 def _draw_slot(page: pymupdf.Page, slot: Slot, text: str | None, theme: Theme) -> None:
@@ -407,7 +423,12 @@ _DELEGATED_HEADER_LABELS = {
 }
 
 
-def _draw_delegated_page(page: pymupdf.Page, manifest, tasks: list, theme: Theme, *, is_last_page: bool = True) -> None:
+def _draw_delegated_page(page: pymupdf.Page, manifest, tasks: list, theme: Theme, *,
+                          is_last_page: bool = True, start_number: int = 1) -> None:
+    """Draw one delegated-tasks page. `start_number` is the row number the
+    first row on this page should carry -- numbering continues across
+    pages rather than restarting at 1 each time (the caller, assemble(),
+    tracks the running total across every page it draws)."""
     geom = manifest.delegated
     x0 = geom.table_top_left[0]
     y = geom.table_top_left[1]
@@ -457,7 +478,7 @@ def _draw_delegated_page(page: pymupdf.Page, manifest, tasks: list, theme: Theme
             page.draw_line((x0, y), (table_right, y), color=(0, 0, 0), width=border_sz)  # redraw over fill
 
         number_rect = pymupdf.Rect(col_x["number"], y, col_x["task"], row_rect_bottom)
-        _draw_text(page, number_rect, str(i + 1), role="label", weight=LC.DELEGATED_ROW_NUMBER_FAMILY_WEIGHT,
+        _draw_text(page, number_rect, str(start_number + i), role="label", weight=LC.DELEGATED_ROW_NUMBER_FAMILY_WEIGHT,
                    size_half_points=LC.DELEGATED_ROW_NUMBER_FONT_SIZE, align="center", theme=theme)
 
         task_rect = pymupdf.Rect(col_x["task"] + 2, y, col_x["owner"] - 2, row_rect_bottom)
@@ -585,8 +606,11 @@ def assemble(state: AgendaState, theme: Theme) -> bytes:
 
     _draw_overview(out[0], manifest, state, theme)
 
+    row_number = 1
     for i, page_tasks in enumerate(delegated_pages):
-        _draw_delegated_page(out[1 + i], manifest, page_tasks, theme, is_last_page=(i == n_delegated - 1))
+        _draw_delegated_page(out[1 + i], manifest, page_tasks, theme,
+                              is_last_page=(i == n_delegated - 1), start_number=row_number)
+        row_number += len(page_tasks)
 
     meeting_start = 1 + n_delegated
     for i, title in enumerate(state.meetings):
