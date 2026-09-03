@@ -92,7 +92,7 @@ def _draw_text(page: pymupdf.Page, rect: pymupdf.Rect, text: str, *, role: str, 
     # a rect's "slack" isn't really slack at all: a to-do task spanning
     # several physical row slots is deliberately drawn top-anchored across
     # their union, one text line per row, so that the row-boundary erasure
-    # right below (_find_ruled_line_y and its caller) -- which targets a
+    # right below (_find_ruled_line and its caller) -- which targets a
     # specific chrome ruled line, not wherever this function happens to
     # put a line of text -- still lands under the right line. Shifting
     # that block down would desync the two.
@@ -122,17 +122,17 @@ def _union(a: tuple, b: tuple) -> tuple:
     return (min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3]))
 
 
-def _find_ruled_line_y(page: pymupdf.Page, x0: float, x1: float, y_near: float) -> float | None:
-    """The y of the wide horizontal ruled line closest to `y_near` that
-    overlaps [x0, x1] on `page`'s own already-drawn chrome content
-    (queried fresh via get_drawings, not estimated). Used instead of
-    guessing a row boundary's y from adjacent slot rects: those are
-    cropped tight around their own captured text, which sits at its own
-    padding distance from the actual row border and isn't reliably at
-    the midpoint between two rows' rects -- see _draw_overview's wrapped-
-    task row-boundary erasure, which used to whiten a y computed that way
-    and could miss the real line by enough to leave it crossing straight
-    through the very text it was meant to look merged under."""
+def _find_ruled_line(page: pymupdf.Page, x0: float, x1: float, y_near: float) -> pymupdf.Rect | None:
+    """The wide horizontal ruled line closest to `y_near` that overlaps
+    [x0, x1] on `page`'s own already-drawn chrome content (queried fresh
+    via get_drawings, not estimated) -- its own full rect, not just its y,
+    so a caller erasing it can match its real width exactly rather than
+    guessing one (see _draw_overview's wrapped-task row-boundary erasure,
+    which needs both: the earlier midpoint-of-two-slot-rects estimate for
+    y could miss the real line enough to leave it crossing straight
+    through the wrapped continuation text, and a flat fudge-factor width
+    either fell short of what real widened content needed or, guessed too
+    generously, ate into the next column's own separate line)."""
     best = None
     best_dist = None
     for d in page.get_drawings():
@@ -145,7 +145,7 @@ def _find_ruled_line_y(page: pymupdf.Page, x0: float, x1: float, y_near: float) 
             continue
         dist = abs(r.y0 - y_near)
         if best_dist is None or dist < best_dist:
-            best, best_dist = r.y0, dist
+            best, best_dist = r, dist
     return best
 
 
@@ -277,27 +277,21 @@ def _draw_overview(page: pymupdf.Page, manifest, state: AgendaState, theme: Them
         # A wrapped task spanning >1 row shares one ruled line, not one per
         # row: whiten the row-boundary line(s) it would otherwise cross
         # (text_fit already decided this many rows are needed for it).
+        # This matches the template's original vMerge behaviour (scripts/
+        # compiler/xml_ops.py's append_tasks, the pre-rewrite renderer):
+        # every cell in a continuation row -- checkbox and due column
+        # included, not just the task cell -- was merged away, so none of
+        # that row's own internal border shows anywhere along its width,
+        # not just under the wrapped text itself.
         for extra in range(1, task.rows):
             top_slot = by_id.get(f"todo.row.{row + extra - 1}.task")
             bottom_slot = by_id.get(f"todo.row.{row + extra}.task")
             if top_slot is not None and bottom_slot is not None:
                 estimate_y = (top_slot.rect[3] + bottom_slot.rect[1]) / 2
-                line_y = _find_ruled_line_y(page, top_slot.rect[0], top_slot.rect[2], estimate_y)
-                if line_y is None:
-                    continue
-                # Erase clear across the task column, not just the narrow
-                # sentinel-cropped slot rect -- wrapped task text is
-                # widened well past it (see _draw_text's "widen" logic) and
-                # a fixed +60pt fudge factor doesn't reliably reach as far
-                # as real content can. The due column's own left edge is a
-                # stable right boundary regardless of what's drawn there:
-                # due text only ever widens rightward from it (same logic),
-                # never left, so stopping just short of it never erases
-                # into the due column's own, still-separate, ruled line.
-                due_bound = by_id.get(f"todo.row.{row + extra - 1}.due")
-                band_x1 = due_bound.rect[0] - 3 if due_bound is not None else top_slot.rect[2] + 60
-                band = pymupdf.Rect(top_slot.rect[0] - 2, line_y - 2, band_x1, line_y + 2)
-                page.draw_rect(band, color=None, fill=(1, 1, 1))
+                line = _find_ruled_line(page, top_slot.rect[0], top_slot.rect[2], estimate_y)
+                if line is not None:
+                    band = pymupdf.Rect(line.x0 - 1, line.y0 - 2, line.x1 + 1, line.y0 + 2)
+                    page.draw_rect(band, color=None, fill=(1, 1, 1))
             # This continuation row never had a checkbox of its own to
             # begin with (see _erase_checkboxes_near) -- erase the one
             # this redraw put there anyway, or the wrapped task reads as
