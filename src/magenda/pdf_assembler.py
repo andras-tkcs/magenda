@@ -96,8 +96,8 @@ def _draw_text(page: pymupdf.Page, rect: pymupdf.Rect, text: str, *, role: str, 
     # specific chrome ruled line, not wherever this function happens to
     # put a line of text -- still lands under the right line. Shifting
     # that block down would desync the two.
+    line_height = text_line_height_twips(family, scaled_size_half_points) / 20
     if center:
-        line_height = text_line_height_twips(family, scaled_size_half_points) / 20
         content_height = line_height * (text.count("\n") + 1)
         slack = rect.height - content_height
         if slack > 0:
@@ -121,10 +121,26 @@ def _draw_text(page: pymupdf.Page, rect: pymupdf.Rect, text: str, *, role: str, 
             # same margin every other caller's bottom edge gets.
             rect = pymupdf.Rect(rect.x0, rect.y0, rect.x1, rect.y0 + content_height + _PAD_BOTTOM)
 
-    page.insert_textbox(
-        rect, text, fontsize=fontsize, fontname=fontname, fontfile=fontfile, color=color,
-        align=_ALIGN.get(align, pymupdf.TEXT_ALIGN_LEFT),
-    )
+    kwargs = dict(fontsize=fontsize, fontname=fontname, fontfile=fontfile, color=color,
+                  align=_ALIGN.get(align, pymupdf.TEXT_ALIGN_LEFT))
+    rc = page.insert_textbox(rect, text, **kwargs)
+    # Both safety valves above (`widen`, and the vertical grow just above)
+    # size the box from our own PIL-based estimate of what pymupdf's real
+    # text-layout engine needs -- close, per their own comments, but never
+    # guaranteed exact, and the gap between the two can be wider on some
+    # platform/pymupdf-version combination than whatever margin either
+    # estimate built in (observed in practice: a task that rendered in
+    # full here still lost text -- silently, per insert_textbox's own
+    # drop-don't-clip behavior -- on another build). rc is pymupdf's own
+    # authoritative fit signal (negative = didn't fit), so trust it over
+    # the estimate: keep growing the box on both axes and retrying until
+    # it actually reports success, rather than a single guess that's
+    # merely usually right.
+    attempts = 0
+    while rc < 0 and attempts < 8:
+        rect = pymupdf.Rect(rect.x0, rect.y0, rect.x1 + 10, rect.y1 + line_height)
+        rc = page.insert_textbox(rect, text, **kwargs)
+        attempts += 1
 
 
 def _draw_slot(page: pymupdf.Page, slot: Slot, text: str | None, theme: Theme) -> None:
