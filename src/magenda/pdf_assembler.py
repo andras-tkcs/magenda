@@ -263,41 +263,80 @@ def _draw_overview(page: pymupdf.Page, manifest, state: AgendaState, theme: Them
         task_slot = by_id.get(f"todo.row.{row}.task")
         due_slot = by_id.get(f"todo.row.{row}.due")
         if task_slot is not None:
-            rect = task_slot.rect
-            for extra in range(1, task.rows):
-                extra_slot = by_id.get(f"todo.row.{row + extra}.task")
-                if extra_slot is not None:
-                    rect = _union(rect, extra_slot.rect)
-            _draw_text(page, _padded(rect), "\n".join(task.lines), role=task_slot.role,
-                       weight=task_slot.weight, size_half_points=task.size_half_points,
-                       align="left", theme=theme, center=(task.rows == 1))
+            row_slots = [by_id.get(f"todo.row.{row + extra}.task") for extra in range(task.rows)]
+            if task.rows > 1 and all(s is not None for s in row_slots):
+                # A wrapped task spanning >1 row shares one ruled line, not
+                # one per row: whiten the row-boundary line(s) it would
+                # otherwise cross (text_fit already decided this many rows
+                # are needed for it) *before* drawing any of this task's
+                # own text, not after -- text is always the topmost thing
+                # on the page this way, so it can never end up with a
+                # sliver of its own glyphs erased by an estimate that
+                # landed a little too close (a real risk once erasure ran
+                # last: a font pack whose ascent metrics differ from
+                # Outfit's, the pack the padding below was calibrated
+                # against, can render a row's own first line closer to
+                # that row's erased top boundary than Outfit does). This
+                # also matches the template's original vMerge behaviour
+                # (scripts/compiler/xml_ops.py's append_tasks, the pre-
+                # rewrite renderer): every cell in a continuation row --
+                # checkbox and due column included, not just the task
+                # cell -- was merged away, so none of that row's own
+                # internal border shows anywhere along its width.
+                for extra in range(1, task.rows):
+                    top_slot, bottom_slot = row_slots[extra - 1], row_slots[extra]
+                    estimate_y = (top_slot.rect[3] + bottom_slot.rect[1]) / 2
+                    line = _find_ruled_line(page, top_slot.rect[0], top_slot.rect[2], estimate_y)
+                    if line is not None:
+                        band = pymupdf.Rect(line.x0 - 1, line.y0 - 2, line.x1 + 1, line.y0 + 2)
+                        page.draw_rect(band, color=None, fill=(1, 1, 1))
+                    # This continuation row never had a checkbox of its
+                    # own to begin with (see _erase_checkboxes_near) --
+                    # erase the one this redraw put there anyway, or the
+                    # wrapped task reads as two separate to-do items
+                    # instead of one merged row.
+                    _erase_checkboxes_near(page, bottom_slot.rect[0] - 2, bottom_slot.rect[1] - 12, bottom_slot.rect[3] + 12)
+
+                # Drawn confined to each physical row separately, not as
+                # one continuous block spanning their union -- a row's
+                # own fixed height (LC.TODO_ROW_HEIGHT_TWIPS) isn't in
+                # general a whole multiple of this content's own line
+                # height, so a block drawn continuously across the union
+                # can end up with a row boundary landing in the middle of
+                # a text line rather than between two of them, and the
+                # erasure above only ever erases at those fixed row
+                # boundaries -- if a line straddled one, erasing it would
+                # take part of that line's own glyphs out with it.
+                # Chunking the text into whole lines per row up front
+                # (using the same row height every row's own erasable
+                # boundary sits at) guarantees a boundary only ever falls
+                # in the gap between two chunks, never inside one.
+                line_height = _line_height_pt(task_slot.weight, task.size_half_points, theme)
+                lines_per_row = max(1, int((LC.TODO_ROW_HEIGHT_TWIPS / 20) // line_height))
+                lines = task.lines
+                for i, slot in enumerate(row_slots):
+                    is_last = i == len(row_slots) - 1
+                    chunk = lines[i * lines_per_row:] if is_last else lines[i * lines_per_row:(i + 1) * lines_per_row]
+                    if not chunk:
+                        continue
+                    chunk_rect = pymupdf.Rect(
+                        slot.rect[0] - _PAD_SIDE, slot.rect[1] - _PAD_TOP, slot.rect[2] + _PAD_SIDE,
+                        slot.rect[1] - _PAD_TOP + len(chunk) * line_height + _PAD_BOTTOM,
+                    )
+                    _draw_text(page, chunk_rect, "\n".join(chunk), role=task_slot.role, weight=task_slot.weight,
+                               size_half_points=task.size_half_points, align="left", theme=theme, center=False)
+            else:
+                rect = task_slot.rect
+                for extra in range(1, task.rows):
+                    extra_slot = by_id.get(f"todo.row.{row + extra}.task")
+                    if extra_slot is not None:
+                        rect = _union(rect, extra_slot.rect)
+                _draw_text(page, _padded(rect), "\n".join(task.lines), role=task_slot.role,
+                           weight=task_slot.weight, size_half_points=task.size_half_points,
+                           align="left", theme=theme, center=(task.rows == 1))
         if due_slot is not None and task.due:
             _draw_text(page, _padded(due_slot.rect), task.due, role=due_slot.role, weight=due_slot.weight,
                        size_half_points=due_slot.size_half_points, align="left", theme=theme)
-        # A wrapped task spanning >1 row shares one ruled line, not one per
-        # row: whiten the row-boundary line(s) it would otherwise cross
-        # (text_fit already decided this many rows are needed for it).
-        # This matches the template's original vMerge behaviour (scripts/
-        # compiler/xml_ops.py's append_tasks, the pre-rewrite renderer):
-        # every cell in a continuation row -- checkbox and due column
-        # included, not just the task cell -- was merged away, so none of
-        # that row's own internal border shows anywhere along its width,
-        # not just under the wrapped text itself.
-        for extra in range(1, task.rows):
-            top_slot = by_id.get(f"todo.row.{row + extra - 1}.task")
-            bottom_slot = by_id.get(f"todo.row.{row + extra}.task")
-            if top_slot is not None and bottom_slot is not None:
-                estimate_y = (top_slot.rect[3] + bottom_slot.rect[1]) / 2
-                line = _find_ruled_line(page, top_slot.rect[0], top_slot.rect[2], estimate_y)
-                if line is not None:
-                    band = pymupdf.Rect(line.x0 - 1, line.y0 - 2, line.x1 + 1, line.y0 + 2)
-                    page.draw_rect(band, color=None, fill=(1, 1, 1))
-            # This continuation row never had a checkbox of its own to
-            # begin with (see _erase_checkboxes_near) -- erase the one
-            # this redraw put there anyway, or the wrapped task reads as
-            # two separate to-do items instead of one merged row.
-            if bottom_slot is not None:
-                _erase_checkboxes_near(page, bottom_slot.rect[0] - 2, bottom_slot.rect[1] - 12, bottom_slot.rect[3] + 12)
         row += task.rows
 
     # daily schedule
