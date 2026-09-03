@@ -7,6 +7,10 @@ template's fixed layout.
 
 `fit_downsize_or_wrap` shrinks the font first and only wraps as a last
 resort — used for the to-do list, whose rows are allowed to grow.
+
+`wrap_text` wraps at a fixed font size, no downsizing — used for a
+delegated task's status updates, whose row is allowed to grow but whose
+font size is fixed regardless of how many lines that takes.
 """
 from __future__ import annotations
 
@@ -79,6 +83,39 @@ def fit_single_line(text: str, *, family: str, size_half_points: int, max_width_
     return text[:lo]
 
 
+def _wrap_words(text: str, font: ImageFont.FreeTypeFont, max_width_pt: float) -> list[str]:
+    """Word-wrap `text` (never truncate) across as many lines as needed to
+    keep every line within `max_width_pt` at `font`'s size."""
+    words = text.split(" ")
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}" if current else word
+        if not current or _width_pt(candidate, font) <= max_width_pt:
+            current = candidate
+        else:
+            lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    return lines
+
+
+def wrap_text(text: str, *, family: str, size_half_points: int, max_width_twips: int) -> list[str]:
+    """Word-wrap `text` (never truncate, font size fixed) across as many
+    lines as needed to fit `max_width_twips` at the given font/size. Unlike
+    `fit_downsize_or_wrap`, this never shrinks the font first -- used where
+    the size is already fixed (e.g. a delegated task's status updates) and
+    a too-long line should grow the row instead of losing text."""
+    if not text:
+        return [text]
+    font = _font(family, max(1, round(size_half_points / 2)))
+    max_width_pt = max_width_twips / 20
+    if _width_pt(text, font) <= max_width_pt:
+        return [text]
+    return _wrap_words(text, font, max_width_pt)
+
+
 def fit_downsize_or_wrap(
     text: str,
     *,
@@ -107,16 +144,4 @@ def fit_downsize_or_wrap(
     if _width_pt(text, font) <= max_width_pt:
         return [text], size
 
-    words = text.split(" ")
-    lines: list[str] = []
-    current = ""
-    for word in words:
-        candidate = f"{current} {word}" if current else word
-        if not current or _width_pt(candidate, font) <= max_width_pt:
-            current = candidate
-        else:
-            lines.append(current)
-            current = word
-    if current:
-        lines.append(current)
-    return lines, size
+    return _wrap_words(text, font, max_width_pt), size

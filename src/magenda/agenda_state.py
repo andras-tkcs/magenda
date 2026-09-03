@@ -22,7 +22,13 @@ from dataclasses import dataclass, field
 from magenda import layout_constants as LC
 from magenda.errors import MagendaError
 from magenda.font_packs import FONT_PACKS
-from magenda.text_fit import fit_downsize_or_wrap, fit_single_line, text_line_height_twips, text_width_twips
+from magenda.text_fit import (
+    fit_downsize_or_wrap,
+    fit_single_line,
+    text_line_height_twips,
+    text_width_twips,
+    wrap_text,
+)
 
 _OUTFIT_WEIGHTS = FONT_PACKS["outfit"]["weights"]
 _VALID_CADENCES = ("daily", "weekly", "monthly")
@@ -215,14 +221,20 @@ def _fit_delegated(task: DelegatedTask) -> None:
         LC.DELEGATED_BULLET_PREFIX, family=_family(LC.DELEGATED_TASK_FAMILY_WEIGHT),
         size_half_points=LC.DELEGATED_STATUS_FONT_SIZE,
     )
-    fitted = [
-        fit_single_line(
+    # Each raw status update word-wraps (never truncates) across as many
+    # lines as it needs -- the row itself grows to fit (_delegated_row_height
+    # counts len(status_lines)), rather than the old fit_single_line, which
+    # silently cut a too-long update off mid-sentence instead of showing the
+    # rest of it on a continuation line.
+    status_lines: list[str] = []
+    for line in raw_lines:
+        wrapped = wrap_text(
             line, family=_family(LC.DELEGATED_TASK_FAMILY_WEIGHT),
             size_half_points=LC.DELEGATED_STATUS_FONT_SIZE, max_width_twips=status_width - bullet_width,
         )
-        for line in raw_lines
-    ]
-    task.status_lines = [f"{LC.DELEGATED_BULLET_PREFIX}{line}" for line in fitted]
+        status_lines.append(f"{LC.DELEGATED_BULLET_PREFIX}{wrapped[0]}")
+        status_lines.extend(f"{LC.DELEGATED_BULLET_CONTINUATION_INDENT}{cont}" for cont in wrapped[1:])
+    task.status_lines = status_lines
 
 
 def add_delegated_tasks(state: "AgendaState", tasks: list[dict]) -> int:
