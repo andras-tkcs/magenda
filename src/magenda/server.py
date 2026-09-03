@@ -15,7 +15,7 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from magenda import tools
-from magenda.xml_ops import MagendaError
+from magenda.errors import MagendaError
 
 mcp = FastMCP("magenda")
 

@@ -37,7 +37,6 @@ Run:
 from __future__ import annotations
 
 import argparse
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -46,14 +45,18 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import pymupdf  # noqa: E402
 from PIL import ImageFont  # noqa: E402
 
-from magenda import agenda_store, font_setup  # noqa: E402
 from magenda.font_packs import FONT_PACKS, WEIGHT_BUCKETS  # noqa: E402
 from magenda.paths import FONTS_DIR, TEMPLATE_PATH  # noqa: E402
-from magenda.xml_ops import NS, cell_text_width_twips, qn  # noqa: E402
+
+from compiler import font_setup  # noqa: E402
+from compiler.docx_document import AgendaDocument  # noqa: E402
+from compiler.soffice import find_soffice  # noqa: E402
+from compiler.xml_ops import NS, cell_text_width_twips, qn  # noqa: E402
 
 SAFETY_MARGIN_TWIPS = 20  # cushion for PIL-vs-LibreOffice layout-engine mismatch
 GENERIC_SAMPLE = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 &-.,:"
@@ -79,25 +82,9 @@ def _bucket_for_pdf_font(fontname: str) -> str | None:
     return None
 
 
-def _find_soffice() -> str:
-    for candidate in (
-        "soffice",
-        "/Applications/LibreOffice.app/Contents/MacOS/soffice",
-        "/opt/homebrew/bin/soffice",
-        "/usr/bin/soffice",
-    ):
-        found = shutil.which(candidate) or (candidate if Path(candidate).exists() else None)
-        if found:
-            return found
-    raise SystemExit(
-        "LibreOffice ('soffice') was not found. Install it (e.g. `brew install --cask "
-        "libreoffice`) to run certification."
-    )
-
-
 def _render_template_pdf(out_dir: Path) -> Path:
     font_setup.ensure_fonts_installed()
-    soffice = _find_soffice()
+    soffice = find_soffice()
     result = subprocess.run(
         [soffice, "--headless", "--norestore", "--convert-to", "pdf", "--outdir", str(out_dir), str(TEMPLATE_PATH)],
         capture_output=True,
@@ -130,7 +117,7 @@ def _verified_rows(pdf_path: Path) -> list[tuple[str, int, list[tuple[str, float
                     [(s["text"], round(s["size"], 1), s["font"]) for s in spans]
                 )
 
-    doc = agenda_store.AgendaDocument.load(TEMPLATE_PATH)
+    doc = AgendaDocument.load(TEMPLATE_PATH)
     rows: "OrderedDict[str, int]" = OrderedDict()
     for tc in doc.body.iter(qn("w:tc")):
         tcW = tc.find("w:tcPr/w:tcW", NS)

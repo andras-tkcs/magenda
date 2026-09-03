@@ -2,12 +2,15 @@ import datetime
 
 import pytest
 
-from magenda import agenda_store, calendar_math, xml_ops
-from magenda.xml_ops import MagendaError
+from magenda import calendar_math
+from magenda.errors import MagendaError
+
+from compiler import xml_ops
+from compiler.docx_document import AgendaDocument, TEMPLATE_PATH
 
 
 def fresh_doc():
-    doc = agenda_store.AgendaDocument.load(agenda_store.TEMPLATE_PATH)
+    doc = AgendaDocument.load(TEMPLATE_PATH)
     xml_ops.blank_meeting_title_slot(doc.body)
     xml_ops.ensure_further_notes_page_break(doc.body)
     xml_ops.remove_delegated_tasks_page(doc.body)
@@ -18,7 +21,7 @@ def fresh_doc_with_delegated_page():
     """Like fresh_doc, but keeps the template's own delegated-tasks page
     (still carrying its 4 illustrative sample rows) instead of dropping it —
     for tests that exercise the template's shape directly."""
-    doc = agenda_store.AgendaDocument.load(agenda_store.TEMPLATE_PATH)
+    doc = AgendaDocument.load(TEMPLATE_PATH)
     xml_ops.blank_meeting_title_slot(doc.body)
     xml_ops.ensure_further_notes_page_break(doc.body)
     return doc
@@ -231,7 +234,7 @@ def test_save_and_reload_roundtrips_valid_xml(tmp_path):
     out = tmp_path / "roundtrip.docx"
     doc.save(out)
 
-    reloaded = agenda_store.AgendaDocument.load(out)
+    reloaded = AgendaDocument.load(out)
     title_para, _ = xml_ops.find_meeting_unit_template(reloaded.body)
     assert xml_ops.meeting_title_text(title_para) == "Roundtrip check"
 

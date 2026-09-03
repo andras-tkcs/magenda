@@ -1,12 +1,11 @@
 [project]
 name = "magenda"
-version = "0.5.3"
-description = "MCP server that generates a deterministic, pixel-identical daily agenda PDF from a fixed docx template."
+version = "0.6.0-beta1"
+description = "MCP server that generates a deterministic, pixel-identical daily agenda PDF from a compiled template -- pure Python at runtime, no LibreOffice."
 license = "Apache-2.0"
 requires-python = ">=3.11"
 dependencies = [
     "mcp>=1.0.0,<2.0.0",
-    "lxml>=5.0.0",
     "Pillow>=10.0.0",
     "pymupdf>=1.24.0",
 ]
@@ -19,6 +18,10 @@ dev = [
     "pytest>=8.0.0",
     "fonttools>=4.50.0",
     "pyinstaller>=6.0",
+    # Compiler-only (scripts/compile_template.py, scripts/compiler/*, and
+    # tests/compiler/*) -- never imported by the runtime package itself.
+    # See docs/design/remove-libreoffice-runtime-dependency.md.
+    "lxml>=5.0.0",
 ]
 
 [build-system]

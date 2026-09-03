@@ -1,12 +1,9 @@
 import base64
-import shutil
 
 import pytest
 
 from magenda import tools
-from magenda.xml_ops import MagendaError
-
-pytestmark = pytest.mark.skipif(shutil.which("soffice") is None, reason="LibreOffice not installed")
+from magenda.errors import MagendaError
 
 
 def _open_pdf(result: dict):

@@ -1,8 +1,8 @@
 """Manual smoke test for font-pack theming: builds the same realistic
-agenda as manual_test.py once, then renders it through theme.py under every
-pack in font_packs.py (plus the untouched Outfit baseline) so the results
-can be compared side by side. Not part of the automated pytest suite — run
-it directly and eyeball the output:
+agenda as manual_test.py once, then renders it via pdf_assembler.py under
+every pack in font_packs.py (plus the untouched Outfit baseline) so the
+results can be compared side by side. Not part of the automated pytest
+suite — run it directly and eyeball the output:
 
     python scripts/manual_test_themed.py
 """
@@ -16,7 +16,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from magenda import theme, tools  # noqa: E402
+from magenda import agenda_store, pdf_assembler, tools  # noqa: E402
 from magenda.theme import Theme  # noqa: E402
 
 
@@ -76,9 +76,12 @@ def main() -> None:
     baseline = tools.render_pdf(date, output_dir=str(out_dir))
     print(" ", baseline)
 
+    state = agenda_store.load(today)
     for pack_id in ("roboto", "jetbrains_mono"):
-        print(f"\n→ theme.render_pdf_with_theme ({pack_id})")
-        path = theme.render_pdf_with_theme(date, Theme(font_pack=pack_id), str(out_dir))
+        print(f"\n→ pdf_assembler.assemble ({pack_id})")
+        pdf_bytes = pdf_assembler.assemble(state, Theme(font_pack=pack_id))
+        path = out_dir / f"{date}-{pack_id}.pdf"
+        path.write_bytes(pdf_bytes)
         print(" ", path)
 
     print(f"\n=== Done. Inspect PDFs under: {out_dir} ===")

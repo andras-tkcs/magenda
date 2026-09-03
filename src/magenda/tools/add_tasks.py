@@ -1,4 +1,4 @@
-from magenda import agenda_store, xml_ops
+from magenda import agenda_state, agenda_store
 from magenda.tools._common import parse_date
 
 
@@ -7,11 +7,7 @@ def add_tasks(date: str, tasks: list[dict]) -> dict:
     top-down. Each task: {"text": "...", "due": "07/05"}. Raises if there
     isn't enough free capacity (18 rows total)."""
     d = parse_date(date)
-    doc = agenda_store.load(d)
-    body = doc.body
-
-    table = xml_ops.find_todo_table(body)
-    xml_ops.append_tasks(table, tasks)
-
-    agenda_store.save(d, doc)
+    state = agenda_store.load(d)
+    agenda_state.add_todo_tasks(state, tasks)
+    agenda_store.save(d, state)
     return {"date": d.isoformat(), "tasks_added": len(tasks)}

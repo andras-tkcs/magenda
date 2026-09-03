@@ -25,6 +25,7 @@ from dataclasses import dataclass
 
 from lxml import etree
 
+from magenda.errors import MagendaError
 from magenda.text_fit import (
     fit_downsize_or_wrap,
     fit_single_line,
@@ -39,10 +40,6 @@ NS = {"w": W}
 def qn(tag: str) -> str:
     prefix, local = tag.split(":")
     return f"{{{W}}}{local}"
-
-
-class MagendaError(Exception):
-    """Raised for caller-facing errors (capacity exceeded, missing doc, etc)."""
 
 
 # --------------------------------------------------------------------------

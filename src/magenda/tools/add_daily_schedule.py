@@ -1,4 +1,4 @@
-from magenda import agenda_store, xml_ops
+from magenda import agenda_state, agenda_store
 from magenda.tools._common import parse_date
 
 
@@ -10,11 +10,7 @@ def add_daily_schedule(date: str, entries: list[dict]) -> dict:
     mentioned are left untouched; calling this again can fill additional
     slots. Text that doesn't fit the row on one line is truncated."""
     d = parse_date(date)
-    doc = agenda_store.load(d)
-    body = doc.body
-
-    table = xml_ops.find_schedule_table(body)
-    xml_ops.fill_schedule_entries(table, entries)
-
-    agenda_store.save(d, doc)
+    state = agenda_store.load(d)
+    agenda_state.set_schedule_entries(state, entries)
+    agenda_store.save(d, state)
     return {"date": d.isoformat(), "slots_filled": len(entries)}

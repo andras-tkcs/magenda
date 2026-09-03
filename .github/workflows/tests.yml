@@ -28,11 +28,10 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'
 
-      - name: Install LibreOffice (headless render backend)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libreoffice fonts-liberation
-
+      # No LibreOffice needed here any more: rendering is pure Python at
+      # runtime (see docs/design/remove-libreoffice-runtime-dependency.md).
+      # `.[dev]` pulls in lxml, needed only by tests/compiler/ (the
+      # template-compiler's own OOXML-editing code, scripts/compiler/).
       - name: Install Python dependencies
         run: pip install -e ".[dev]"
 
